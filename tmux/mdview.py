@@ -9,13 +9,32 @@ Plain left-aligned headings (no banners/boxes), mouse scroll, links open in the
 browser, reloads when the file changes.
 Keys: q/esc close · g/G top/bottom · r reload
 """
+import re
 import sys
 import webbrowser
 from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
+from textual import _xterm_parser
 from textual.widgets import Markdown
+
+_parse_mouse = _xterm_parser.XTermParser.parse_mouse_code
+_HWHEEL = re.compile(r"\x1b\[<(\d+);")
+
+
+def _parse_mouse_hwheel(self, code: str):
+    # Horizontal wheel/trackpad swipes arrive as buttons 66 (left) / 67 (right).
+    # Textual 3 reads them as vertical scrolls; turn them into shift+wheel, which
+    # Textual scrolls horizontally — so a swipe over a wide code block pans it.
+    m = _HWHEEL.match(code)
+    if m and int(m.group(1)) & 67 in (66, 67):
+        b = int(m.group(1))
+        code = code.replace(m.group(0), f"\x1b[<{(b & ~2) | 4};", 1)
+    return _parse_mouse(self, code)
+
+
+_xterm_parser.XTermParser.parse_mouse_code = _parse_mouse_hwheel
 
 CSS = """
 Screen { background: ansi_default; }
@@ -37,7 +56,9 @@ MarkdownBulletList MarkdownBulletList, MarkdownOrderedList MarkdownOrderedList {
 MarkdownBullet { color: #5f8791; }
 
 MarkdownBlockQuote { background: ansi_default; border-left: outer #3d6570; padding: 0 1; margin: 0 0 1 0; color: #9fb3b8; }
-MarkdownFence { background: #0b2429; margin: 0 0 1 0; padding: 0 1; max-height: 40; }
+/* code blocks keep their lines; the wheel over one scrolls it first (up/down past
+   20 rows, left/right with a sideways swipe or shift+wheel), then the page */
+MarkdownFence { background: #0b2429; margin: 0 0 1 0; padding: 0 1; max-height: 20; scrollbar-size: 1 1; scrollbar-color: #2a4a50; scrollbar-background: #0b2429; }
 MarkdownHorizontalRule { border-bottom: solid #2a4a50; }
 MarkdownTable { margin: 0 0 1 0; }
 MarkdownTableContent { background: ansi_default; }
@@ -55,6 +76,7 @@ class MdView(App):
         super().__init__(ansi_color=True)
         self.path = path
         self.mtime = 0.0
+        self.reloading = False
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
@@ -74,9 +96,17 @@ class MdView(App):
         await self.query_one("#md", Markdown).update(text)
 
     async def watch_file(self) -> None:
+        # never stack reloads: a slow re-render of a big file overlapping the
+        # next 1s tick is the likeliest way to wedge the app
+        if self.reloading:
+            return
         try:
             if self.path.stat().st_mtime != self.mtime:
-                await self.action_reload()
+                self.reloading = True
+                try:
+                    await self.action_reload()
+                finally:
+                    self.reloading = False
         except OSError:
             pass
 
