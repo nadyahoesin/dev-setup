@@ -198,6 +198,16 @@ restart forever — 7 idle sessions pushed load average to ~400. cc-my-pi hardco
 the poll, so the extension re-patches the installed package each time pi starts
 (it survives `pi update`); the footer still refreshes on input and after each
 tool call. `PI_GIT_INFO_POLL=1` turns polling back on.
+
+`pi/agents/general-purpose.md` is the one subagent type: pi-subagents' three
+built-ins (general-purpose / Explore / Plan) are switched off
+(`pi/subagents.json` → `disableDefaultAgents`), and any `subagent_type` the
+orchestrator makes up falls back to it (`fallbackSubagent`). It is a parent
+twin (all tools, same system prompt and skills) pinned to `model:
+openai-codex/gpt-5.6-luna`, `thinking: medium` — frontmatter is authoritative
+in pi-subagents, so the orchestrating model cannot pick another model for a
+subagent. Linked into `~/.pi/agent/agents/`; a project-local
+`.pi/agents/<name>.md` still wins.
 Skills are provided by those packages, not vendored here.
 
 ## Skills
