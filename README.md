@@ -153,7 +153,7 @@ minimal so thinking models return a parseable name.
 It also ignores in-process pi-subagents child sessions (no UI bound, name
 `<agent>#<id>`), which otherwise re-fired its handlers and renamed the tab to
 `general purpose 3f8a8d01` every time the orchestrator spawned a worker.
-`pi/models.json` caps deepseek-v4.1-flash at a 500k window (of its nominal 1M) so
+`pi/models.json` caps deepseek-v4.1-flash and both muse-spark contributor models at a 500k window (of their nominal 1M) so
 auto-compaction and the ctx meter both work off 500k — cost isn't the constraint
 at $0.003/M cached input; long-context quality and latency are.
 `tuiMode: fullscreen` renders only the visible part of the transcript on its
