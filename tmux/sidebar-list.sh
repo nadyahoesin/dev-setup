@@ -75,6 +75,7 @@ while IFS='|' read -r wid st cmd ppid; do   # '|' not tab: tabs are IFS whitespa
   case "$st" in
     waiting) a=3 ;;
     working) a=2 ;;
+    idle) a=0 ;;   # said explicitly by the agent; its pane command (`node`) would otherwise read as "running"
     *) case "$cmd" in
          zsh|bash|sh|fish|-zsh|login|tmux|uv|glow|less|python3|[0-9]*.[0-9]*.[0-9]*) ;;   # shells, idle agents (version-named), md sidebar
          *) a=1 ;;
@@ -92,6 +93,7 @@ activity() {  # indicator for tab $1 in $REPLY_A (visible width 2)
     3) REPLY_A="${RED}!${RST} " ;;
     2) REPLY_A="${YEL}●${RST} " ;;
     1) REPLY_A="${GRN}●${RST} " ;;
+    0) REPLY_A="${DIM}•${RST} " ;;   # an agent sitting at its prompt: small and grey
     *) REPLY_A="  " ;;
   esac
 }
@@ -104,10 +106,14 @@ busy_children() {  # busy worker count under tab $1 in $REPLY_B
     [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && REPLY_B=$((REPLY_B + 1))
   done
 }
-# tabs whose worker children are folded away (toggled by clicking ▾/▸)
-COLLAPSED_FILE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.collapsed"
-COLLAPSED=" "; [[ -f $COLLAPSED_FILE ]] && COLLAPSED=" $(<"$COLLAPSED_FILE") "
-COLLAPSED=${COLLAPSED//$'\n'/ }
+# Tabs that list their finished workers too (toggled by clicking ▾/▸).
+# By default a tab shows only the workers still running, the way Claude Code
+# shows subagents: one that finished folds away, and comes back the moment it
+# is given another turn. The session itself is untouched — tearing it down
+# deletes a worktree, so that stays `agent-session.sh stop`.
+SHOWALL_FILE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.showall"
+SHOWALL=" "; [[ -f $SHOWALL_FILE ]] && SHOWALL=" $(<"$SHOWALL_FILE") "
+SHOWALL=${SHOWALL//$'\n'/ }
 
 child_count() {  # number of workers under tab $1, in $REPLY_N; 1 if one is being viewed
   local i; REPLY_N=0; VIEWING=0
@@ -123,8 +129,8 @@ EXPANDED_FILE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.expanded"
 EXPANDED=" "; [[ -f $EXPANDED_FILE ]] && EXPANDED=" $(<"$EXPANDED_FILE") "
 EXPANDED=${EXPANDED//$'\n'/ }
 
-children() {  # print child rows for tab $1 (group $2, index $3); orphans go under "workers"
-  local want=$1 i sess m busy label pid sub d nsub bsub fold tail view open
+children() {  # print child rows for tab $1 (group $2, index $3); $4=1 lists finished ones too
+  local want=$1 i sess m busy label pid sub d nsub bsub fold tail view open showall=${4:-0}
   for i in "${!W_SESS[@]}"; do
     [[ ${W_PARENT[$i]} == "$want" ]] || continue
     sess=${W_SESS[$i]}
@@ -132,6 +138,8 @@ children() {  # print child rows for tab $1 (group $2, index $3); orphans go und
     busy=""
     pid=""; [[ -f $STATE/pi/$sess/busy ]] && read -r pid < "$STATE/pi/$sess/busy"
     [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && busy="${YEL}●${RST}"
+    # a worker that finished is folded away; the one you are looking at stays
+    [[ -z $busy && $showall != 1 && $sess != "$CUR" && $CUR != "pisub-$sess--"* ]] && continue
     # nested `pi -p` runs this worker started (recorded by the skill's shim/pi)
     sub=$STATE/pi/$sess/sub nsub=0 bsub=0 fold="" tail="" open=0
     for d in "$sub"/*/; do
@@ -263,20 +271,22 @@ while IFS=$'\t' read -r id idx active act path name; do
   if is_braille "$name"; then name="⋯${name:1}"; fi
   group_of "$path"
   child_count "$id"
-  fold=" " open=1
+  busy_children "$id"
+  fold=" " showall=0
   if (( REPLY_N > 0 )); then
-    if [[ $COLLAPSED == *" $id "* ]]; then
-      fold="▸" open=0
-      (( VIEWING )) && m="▶"   # the child being viewed is folded away: point at its parent
-    else fold="▾"; fi
+    [[ $SHOWALL == *" $id "* ]] && showall=1
+    # a fold glyph only where there is something to fold: workers still running
+    # (or the one being viewed). Once they are all finished the tab shows
+    # nothing at all — no glyph, no count — until one gets another turn.
+    (( showall || REPLY_B > 0 || VIEWING )) && fold="▾"
   fi
   activity "$id"
   # the ⋯ spinner glyph is now shown as the activity dot instead
   name=${name#⋯ }; name=${name#✳ }
   tail=""; tw=0
   if (( REPLY_N > 0 )); then
-    busy_children "$id"
-    if (( open == 0 )); then tail="${DIM} ${REPLY_N}${RST}"; tw=$((1 + ${#REPLY_N})); fi
+    # nothing marks a finished worker: a tab with none running reads as a plain
+    # tab again, and its workers reappear by themselves if one is given a turn
     if (( REPLY_B > 0 )); then tail="$tail ${YEL}⋯${REPLY_B}${RST}"; tw=$((tw + 2 + ${#REPLY_B})); fi
   fi
   room; fit "$name" $(( REPLY_ROOM - 4 - tw )); name=$REPLY_F
@@ -285,7 +295,7 @@ while IFS=$'\t' read -r id idx active act path name; do
   cm=""; [[ $m == "▶" ]] && cm=$'\t▶'
   # tab names stand out from the terminal text: bold, bright white (terminals have one font size)
   printf '%s\t%04d\t%s\t%s %s%s%s%s%s%s\n' "$REPLY" "$idx" "$id" "$fold" "$REPLY_A" $'\e[1;97m' "$name" $'\e[22;39m' "$tail" "$cm"
-  (( open )) && children "$id" "$REPLY" "$idx"
+  children "$id" "$REPLY" "$idx" "$showall"
 done < <(tmux list-windows -t main -F $'#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity_flag}\t#{pane_current_path}\t#{window_name}' 2>/dev/null) |
 { sort -t$'\t' -s -k1,1 -k2,2; children "" workers 9999; } |
 render

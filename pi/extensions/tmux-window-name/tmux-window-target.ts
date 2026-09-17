@@ -31,3 +31,37 @@ export async function resolveTmuxWindowTarget(
     return undefined;
   }
 }
+
+export type TmuxWindowState = {
+  name: string;
+  /** tmux's automatic-rename for this window; it turns itself off on a manual rename-window */
+  automatic: boolean;
+};
+
+export async function readTmuxWindowState(
+  exec: TmuxExec,
+  target?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<TmuxWindowState | undefined> {
+  if (!env.TMUX) return undefined;
+
+  const where = normalizeTarget(target) ?? normalizeTarget(env.TMUX_PANE);
+  if (!where) return undefined;
+
+  try {
+    const result = await exec("tmux", [
+      "display-message",
+      "-p",
+      "-t",
+      where,
+      "#{window_name}\t#{automatic-rename}",
+    ]);
+    if (result.code !== 0) return undefined;
+
+    const [name, automatic] = (result.stdout ?? "").trim().split("\t");
+    if (!name) return undefined;
+    return { name, automatic: automatic !== "0" };
+  } catch {
+    return undefined;
+  }
+}

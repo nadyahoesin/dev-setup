@@ -8,7 +8,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { isTmuxWindowNameExtensionDisabled } from "./disable.ts";
-import { buildRenameWindowArgs, resolveTmuxWindowTarget } from "./tmux-window-target.ts";
+import { buildRenameWindowArgs, readTmuxWindowState, resolveTmuxWindowTarget } from "./tmux-window-target.ts";
 
 const WINDOW_WORD_MIN = 3;
 const WINDOW_WORD_MAX = 4;
@@ -345,6 +345,9 @@ export default function tmuxWindowNameExtension(pi: ExtensionAPI) {
   let sessionEpoch = 0;
   let tmuxWindowTarget: string | undefined;
   let tmuxWindowTargetInFlight: Promise<string | undefined> | null = null;
+  // the window name this extension last applied; anything else on an
+  // automatic-rename-off window was put there by hand
+  let ourWindowName: string | undefined;
 
   const resetSessionState = () => {
     sessionEpoch += 1;
@@ -353,6 +356,33 @@ export default function tmuxWindowNameExtension(pi: ExtensionAPI) {
     renameInFlight = null;
     tmuxWindowTarget = undefined;
     tmuxWindowTargetInFlight = null;
+    ourWindowName = undefined;
+  };
+
+  /**
+   * A tab the user named themselves keeps its name.
+   *
+   * tmux turns a window's `automatic-rename` off the moment someone runs
+   * `rename-window` on it (prefix-r here). So a window with automatic-rename
+   * off whose name this extension never set was named by hand — and that name
+   * outranks any generated one, for this session and every later turn of it.
+   * Returns the adopted name, or undefined when the tab is still ours to name.
+   */
+  const adoptManualWindowName = async (
+    targetWindow: string | undefined,
+    known: string | undefined,
+  ): Promise<string | undefined> => {
+    const state = await readTmuxWindowState((command, args) => pi.exec(command, args), targetWindow);
+    if (!state || state.automatic) return undefined;
+    const mine = ourWindowName ?? known;
+    if (mine && state.name === mine) return undefined;
+
+    ourWindowName = state.name;
+    if (!pi.getSessionName()) pi.setSessionName(state.name);
+    pi.appendEntry(WINDOW_NAME_ENTRY_TYPE, { windowName: state.name });
+    hasNameForSession = true;
+    hasAttemptedNameForSession = true;
+    return state.name;
   };
 
   const captureTmuxWindowTarget = async (): Promise<string | undefined> => {
@@ -377,6 +407,7 @@ export default function tmuxWindowNameExtension(pi: ExtensionAPI) {
   const persistNames = async (names: GeneratedNames, targetWindow?: string) => {
     pi.setSessionName(names.sessionName);
     pi.appendEntry(WINDOW_NAME_ENTRY_TYPE, { windowName: names.windowName });
+    ourWindowName = names.windowName;
     await renameCurrentTmuxWindow(pi, names.windowName, targetWindow);
     hasNameForSession = true;
     hasAttemptedNameForSession = true;
@@ -457,6 +488,8 @@ export default function tmuxWindowNameExtension(pi: ExtensionAPI) {
 
   const applyAutoName = async (seedPrompt: string | undefined, ctx: ExtensionContext): Promise<void> => {
     const targetWindow = await captureTmuxWindowTarget();
+    if (await adoptManualWindowName(targetWindow, getStoredWindowName(ctx.sessionManager.getBranch()))) return;
+
     const existing = pi.getSessionName();
     if (existing) {
       const restoredWindow = getStoredWindowName(ctx.sessionManager.getBranch()) ?? compactWindowName(existing, 1) ?? existing;
@@ -475,6 +508,8 @@ export default function tmuxWindowNameExtension(pi: ExtensionAPI) {
 
     const targetWindow = await captureTmuxWindowTarget();
     const storedWindow = getStoredWindowName(ctx.sessionManager.getBranch());
+    if (await adoptManualWindowName(targetWindow, storedWindow)) return;
+
     const windowName = storedWindow ?? compactWindowName(existing, 1) ?? existing;
     await renameCurrentTmuxWindow(pi, windowName, targetWindow);
     hasNameForSession = true;
