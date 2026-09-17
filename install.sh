@@ -18,17 +18,23 @@ link() {  # link SRC DST — symlink, backing up a real file if one is in the wa
 if [ "$what" = all ] || [ "$what" = terminal ]; then
   say "dependencies (brew)"
   for f in ghostty; do brew list --cask "$f" >/dev/null 2>&1 || brew install --cask "$f"; done
-  for f in tmux fzf jq; do brew list "$f" >/dev/null 2>&1 || brew install "$f"; done
+  for f in tmux fzf jq glow; do brew list "$f" >/dev/null 2>&1 || brew install "$f"; done
 
   say "tmux"
   link "$REPO/tmux/tmux.conf" "$HOME/.tmux.conf"
-  for f in ui.conf ghostty-ui.sh sidebar.sh sidebar-list.sh sidebar-refresh.sh sidebar-click.sh sidebar-pos.sh sidebar-nav.sh sidebar-redraw.sh open-url.sh copy-release.sh agent-notify.sh selftest.sh clicktest.py; do
+  for f in ui.conf ghostty-ui.sh sidebar.sh sidebar-list.sh sidebar-refresh.sh sidebar-click.sh sidebar-pos.sh sidebar-nav.sh sidebar-redraw.sh sidebar-poll.sh agent-state.sh open-url.sh md-view.sh keys-help.sh md-sidebar.sh mdview.py md-click.sh md-click-parse.py glow-sidebar.json copy-release.sh agent-notify.sh selftest.sh clicktest.py; do
     link "$REPO/tmux/$f" "$HOME/.config/tmux/$f"
   done
 
   say "ghostty"
   mkdir -p "$HOME/.config/ghostty"
-  cat > "$HOME/.config/ghostty/config" <<EOF
+  # cmux reads this file too, so never clobber a pre-existing one silently.
+  G="$HOME/.config/ghostty/config"
+  if [ -f "$G" ] && ! grep -q "Managed by dev-setup" "$G"; then
+    cp "$G" "$G.bak-$(date +%Y%m%d%H%M%S)"
+    say "  backed up existing ghostty config"
+  fi
+  cat > "$G" <<EOF
 # Managed by dev-setup — edit $REPO/ghostty/config instead.
 config-file = $REPO/ghostty/config
 command = $HOME/.config/tmux/ghostty-ui.sh

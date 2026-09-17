@@ -1,10 +1,36 @@
 font-family = JetBrains Mono
-font-size = 11
+font-size = 12.5
+# Retina: full-strength thickening at a small size smears glyphs together;
+# a light touch plus gamma-correct blending keeps strokes crisp on the dark bg
 font-thicken = true
+font-thicken-strength = 150
+adjust-cell-height = 12%
+font-feature = -calt
 # never blink, whatever the app's DECSCUSR asks for (Claude Code/Codex request a
 # blinking cursor while streaming and it flickers through two tmux layers)
 cursor-style-blink = false
-theme = light:GitHub Light Default,dark:GitHub Dark Default
+# ── Noctis (recovered from cmux) ─────────────────────────────────────
+# Shared by Ghostty and cmux: both read ~/.config/ghostty/config, which
+# includes this file. Keep them in sync by editing here only.
+background = #031417
+foreground = #c1d4d7
+cursor-color = #40d4e7
+palette = 0=#324a4d
+palette = 1=#e66533
+palette = 2=#49e9a6
+palette = 3=#e4b781
+palette = 4=#49ace9
+palette = 5=#df769b
+palette = 6=#49d6e9
+palette = 7=#b2cacd
+palette = 8=#47686c
+palette = 9=#e97749
+palette = 10=#60ebb1
+palette = 11=#e69533
+palette = 12=#60b6eb
+palette = 13=#e798b3
+palette = 14=#60dbeb
+palette = 15=#c1d4d7
 
 window-decoration = true
 window-save-state = never
@@ -33,15 +59,15 @@ keybind = super+s=text:\x02s
 keybind = super+r=text:\x02r
 keybind = super+shift+left_bracket=text:\x02p
 keybind = super+shift+right_bracket=text:\x02n
-keybind = super+one=text:\x021
-keybind = super+two=text:\x022
-keybind = super+three=text:\x023
-keybind = super+four=text:\x024
-keybind = super+five=text:\x025
-keybind = super+six=text:\x026
-keybind = super+seven=text:\x027
-keybind = super+eight=text:\x028
-keybind = super+nine=text:\x029
+keybind = super+digit_1=text:\x021
+keybind = super+digit_2=text:\x022
+keybind = super+digit_3=text:\x023
+keybind = super+digit_4=text:\x024
+keybind = super+digit_5=text:\x025
+keybind = super+digit_6=text:\x026
+keybind = super+digit_7=text:\x027
+keybind = super+digit_8=text:\x028
+keybind = super+digit_9=text:\x029
 
 # splits
 keybind = super+d=text:\x02|
@@ -57,3 +83,5 @@ keybind = alt+enter=text:\x1b\r
 keybind = alt+up=text:\x1b[1;3A
 keybind = super+shift+k=text:\x02K
 keybind = super+shift+u=text:\x02u
+keybind = super+shift+m=text:\x02m
+keybind = super+slash=text:\x02?
