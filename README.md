@@ -175,6 +175,13 @@ there. We use remote-pi for the phone only.
 banner instantiates every extension a second time (a throwaway loader just to
 count them), which left remote-pi bound to a dead API and broke `/remote-pi pair`;
 it also costs startup time.
+`pi/extensions/cc-my-pi-no-git-poll.ts` stops cc-my-pi's statusline from running
+`git status --untracked-files=all` + `git diff --shortstat HEAD` every 3 s in
+every idle session. On a big dirty monorepo those outlast the 3 s timeout and
+restart forever — 7 idle sessions pushed load average to ~400. cc-my-pi hardcodes
+the poll, so the extension re-patches the installed package each time pi starts
+(it survives `pi update`); the footer still refreshes on input and after each
+tool call. `PI_GIT_INFO_POLL=1` turns polling back on.
 Skills are provided by those packages, not vendored here.
 
 ## Skills
