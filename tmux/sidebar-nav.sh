@@ -8,7 +8,7 @@ unset TMUX
 CACHE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.rows"
 cur=$(tmux display -t main -p '#{window_id}')
 # targets only (skip group headers), in display order
-ids=$(cut -f1 "$CACHE" 2>/dev/null | grep '^@')
+ids=$(SIDEBAR_FULL=1 "$HOME/.config/tmux/sidebar-list.sh" | cut -f1 | grep '^@')
 if [ -z "$ids" ]; then   # cache missing/blank: rebuild it rather than do nothing
   "$HOME/.config/tmux/sidebar-list.sh" > "$CACHE"
   ids=$(cut -f1 "$CACHE" | grep '^@')

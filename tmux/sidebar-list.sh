@@ -15,9 +15,21 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 export LC_ALL=en_US.UTF-8   # printf pads by characters, not bytes
 unset TMUX
 exec 2>/dev/null   # never let a stray error reach tmux/fzf output
-W=${SIDEBAR_WIDTH:-51}
+# the sidebar pane's real width (it can be dragged narrower than the default 51)
+read -r PW PH < <(tmux -L ui display -p -t ui:.0 '#{pane_width} #{pane_height}' 2>/dev/null)
+W=${SIDEBAR_WIDTH:-$PW}
+[[ $W =~ ^[0-9]+$ ]] && (( W >= 24 )) || W=51
+[[ $PH =~ ^[0-9]+$ ]] && (( PH >= 5 )) || PH=40
+echo "$W $PH" > "${TMPDIR:-/tmp}/tmux-sidebar-$UID.size"
 PAD=$((W - 7))          # fzf left margin 2 + "  " indent + marker + " " + name, one col spare
 DIM=$'\e[2m'; RST=$'\e[0m'
+fit() {  # fit <text> <max columns> → $REPLY_F, cut with … only when it doesn't fit
+  local t=$1 m=$2
+  (( m < 1 )) && m=1
+  if (( ${#t} > m )); then REPLY_F="${t:0:$((m - 1))}…"; else REPLY_F=$t; fi
+}
+# columns a row's text gets inside its card (width - margins/scrollbar - "│ " … "│")
+room() { REPLY_ROOM=$(( W - 4 - 3 )); }
 
 # This runs up to ten times a second while agents animate their titles, so no
 # subprocesses per row: pure bash string ops only, one tmux call, one sort.
@@ -121,7 +133,7 @@ children() {  # print child rows for tab $1 (group $2, index $3); orphans go und
     pid=""; [[ -f $STATE/pi/$sess/busy ]] && read -r pid < "$STATE/pi/$sess/busy"
     [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && busy="${YEL}●${RST}"
     # nested `pi -p` runs this worker started (recorded by the skill's shim/pi)
-    sub=$STATE/pi/$sess/sub nsub=0 bsub=0 fold="  " tail="" open=0
+    sub=$STATE/pi/$sess/sub nsub=0 bsub=0 fold="" tail="" open=0
     for d in "$sub"/*/; do
       [[ -f ${d}label ]] || continue
       nsub=$((nsub + 1)); pid=""
@@ -135,8 +147,10 @@ children() {  # print child rows for tab $1 (group $2, index $3); orphans go und
       (( bsub > 0 )) && tail="$tail ${YEL}⋯$bsub${RST}"
       (( open == 0 )) && [[ $CUR == "$view"* ]] && m="▶"
     fi
-    label=${sess#*-wt-}; label=${label:0:$((PAD - 13 - ${#nsub} - 3))}
-    printf '%s\t%04d\t%s\t  %s     %s└%s %s%s %s%s\n' "$2" "$3" "s:$sess" "$m" "$DIM" "$RST" "$fold" "$label" "$busy" "$tail"
+    room; vis "$tail"
+    fit "${sess#*-wt-}" $(( REPLY_ROOM - 5 - ${#fold} - 2 - ${#REPLY_V} )); label=$REPLY_F
+    cm=""; [[ $m == "▶" ]] && cm=$'\t▶'
+    printf '%s\t%04d\t%s\t   %s└%s %s%s %s%s%s\n' "$2" "$3" "s:$sess" "$DIM" "$RST" "$fold" "$label" "$busy" "$tail" "$cm"
     (( open )) || continue
     for d in "$sub"/*/; do
       [[ -f ${d}label ]] || continue
@@ -146,10 +160,99 @@ children() {  # print child rows for tab $1 (group $2, index $3); orphans go und
       [[ -f ${d}pid ]] && read -r pid < "${d}pid"
       if [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null; then busy="${YEL}●${RST}"
       elif [[ -f ${d}exit && $(<"${d}exit") != 0 ]]; then busy="${RED}✗${RST}"; fi
-      read -r label < "${d}label"; label=${label:0:$((PAD - 16))}
-      printf '%s\t%04d\t%s\t  %s       %s└ %s%s %s\n' "$2" "$3" "v:pisub-$sess--$n" "$m" "$DIM" "$label" "$RST" "$busy"
+      read -r label < "${d}label"; room; fit "$label" $(( REPLY_ROOM - 10 )); label=$REPLY_F
+      cm=""; [[ $m == "▶" ]] && cm=$'\t▶'
+      printf '%s\t%04d\t%s\t      %s└ %s%s %s%s\n' "$2" "$3" "v:pisub-$sess--$n" "$DIM" "$label" "$RST" "$busy" "$cm"
     done
   done
+}
+
+# ── layout ────────────────────────────────────────────────────────────────
+# SIDEBAR_STYLE (or the style file, set by sidebar-style.sh): how tabs are separated
+#   spaced    blank line between tabs
+#   dividers  faint rule between tabs
+#   cards     each tab (with its workers) in its own rounded box
+#   sections  one box per project folder, dotted rules between its tabs
+STYLE_FILE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.style"
+STYLE=${SIDEBAR_STYLE:-}
+[[ -z $STYLE && -f $STYLE_FILE ]] && read -r STYLE < "$STYLE_FILE"
+STYLE=${STYLE:-cards}
+CW=$((W - 4))                  # usable columns: fzf margin 1 + gutter 1, a gap, and the scrollbar column
+BOR=$'\e[38;2;42;74;80m'       # faint teal, same as the md viewer's rules
+shopt -s extglob
+rep() { local out="" i; for ((i = 0; i < $2; i++)); do out+=$1; done; REPLY_R=$out; }
+vis() { REPLY_V=${1//$'\e['*([0-9;])m/}; }
+row() {  # row <target> <display-with-optional-\t▶>
+  local t=$1 d=$2 cm="" hl="" n
+  [[ $d == *$'\t▶' ]] && { cm=$'\t▶'; d=${d%$'\t▶'}; }
+  # The active tab is highlighted in the row itself, not by fzf's cursor: fzf's
+  # cursor can't leave the screen, so it stuck to the top when you scrolled the
+  # active tab away. A scrolled-off row simply takes its highlight with it.
+  if [[ -n $cm ]]; then
+    hl=$'\e[48;2;7;53;59m'
+    d="${d//$'\e[0m'/$'\e[0m'$hl}"
+    d="${d//$'\e[39m'/$'\e[39m'$hl}"
+    d="${d//$'\e[22;39m'/$'\e[22;39m'$hl}"
+  fi
+  case "$STYLE" in
+    cards|sections)
+      vis "$d"; n=$(( CW - 3 - ${#REPLY_V} )); (( n < 0 )) && n=0
+      if [[ -n $cm ]]; then
+        printf '%s\t%s┃%s%s %s%*s%s%s│%s%s\n' "$t" $'\e[38;2;64;212;231m' "$RST" "$hl" "$d" "$n" '' "$RST" "$BOR" "$RST" "$cm"
+      else
+        printf '%s\t%s│%s %s%*s%s│%s%s\n' "$t" "$BOR" "$RST" "$d" "$n" '' "$BOR" "$RST" "$cm"
+      fi ;;
+    *) vis "$d"; n=$(( CW - ${#REPLY_V} )); (( n < 0 )) && n=0
+       [[ -n $cm ]] && printf '%s\t%s%s%*s%s%s\n' "$t" "$hl" "$d" "$n" '' "$RST" "$cm" || printf '%s\t%s\n' "$t" "$d" ;;
+  esac
+}
+rule() {  # rule <left> <fill> <right> [title]
+  local title=${4:-} fillw
+  if [[ -n $title ]]; then
+    fillw=$(( CW - 2 - ${#title} - 3 )); rep "$2" "$fillw"
+    printf '\t%s%s%s %s%s%s %s%s%s\n' "$BOR" "$1" "$2" "$RST$DIM" "$title" "$RST" "$BOR" "$REPLY_R$3" "$RST"
+  else
+    rep "$2" $(( CW - 2 )); printf '\t%s%s%s%s%s\n' "$BOR" "$1" "$REPLY_R" "$3" "$RST"
+  fi
+}
+render() {
+  local g idx target display prev="" inblock=0 ingroup=0
+  close_block() { (( inblock )) || return 0; [[ $STYLE == cards ]] && rule "╰" "─" "╯"; inblock=0; }
+  close_group() {
+    close_block
+    (( ingroup )) || return 0
+    [[ $STYLE == sections ]] && rule "╰" "─" "╯"
+    ingroup=0
+  }
+  while IFS=$'\t' read -r g idx target display; do
+    if [[ $g != "$prev" ]]; then
+      local had=$ingroup; close_group
+      (( had )) && printf '\t \n'
+      case "$STYLE" in
+        sections) rule "╭" "─" "╮" "$g" ;;
+        dividers) printf '\t%s%s%s\n' "$DIM" "$g" "$RST"; rule "" "─" "" ;;
+        cards)    printf '\t%s%s%s\n' "$DIM" "$g" "$RST" ;;
+        *)        printf '\t%s%s%s\n\t \n' "$DIM" "$g" "$RST" ;;
+      esac
+      prev=$g ingroup=1 first=1
+    fi
+    if [[ $target == @* || $first == 1 ]]; then   # a tab starts a new block
+      if (( ! first )); then
+        close_block
+        case "$STYLE" in
+          spaced)   printf '\t \n' ;;
+          dividers) rule "" "─" "" ;;
+          sections) rule "│" "┄" "│" ;;
+        esac
+      fi
+      [[ $STYLE == cards ]] && rule "╭" "─" "╮"
+      inblock=1 first=0
+    fi
+    row "$target" "$display"
+  done
+  close_group
+  [[ $STYLE == dividers ]] && rule "" "─" ""
+  return 0
 }
 
 # group \t window-index \t target \t display  → stable sort by group keeps tab order
@@ -170,22 +273,20 @@ while IFS=$'\t' read -r id idx active act path name; do
   activity "$id"
   # the ⋯ spinner glyph is now shown as the activity dot instead
   name=${name#⋯ }; name=${name#✳ }
-  name=${name:0:$((PAD - 6))}
   tail=""; tw=0
   if (( REPLY_N > 0 )); then
     busy_children "$id"
     if (( open == 0 )); then tail="${DIM} ${REPLY_N}${RST}"; tw=$((1 + ${#REPLY_N})); fi
     if (( REPLY_B > 0 )); then tail="$tail ${YEL}⋯${REPLY_B}${RST}"; tw=$((tw + 2 + ${#REPLY_B})); fi
   fi
-  room=$(( PAD - 6 - ${#name} - tw )); (( room < 0 )) && room=0
-  printf '%s\t%04d\t%s\t  %s %s %s%s%s%*s\n' "$REPLY" "$idx" "$id" "$m" "$fold" "$REPLY_A" "$name" "$tail" "$room" ''
+  room; fit "$name" $(( REPLY_ROOM - 4 - tw )); name=$REPLY_F
+  # no activity dot but unseen output: a dim dot in the same column
+  [[ $REPLY_A == "  " && $act == 1 ]] && REPLY_A="${DIM}•${RST} "
+  cm=""; [[ $m == "▶" ]] && cm=$'\t▶'
+  # tab names stand out from the terminal text: bold, bright white (terminals have one font size)
+  printf '%s\t%04d\t%s\t%s %s%s%s%s%s%s\n' "$REPLY" "$idx" "$id" "$fold" "$REPLY_A" $'\e[1;97m' "$name" $'\e[22;39m' "$tail" "$cm"
   (( open )) && children "$id" "$REPLY" "$idx"
 done < <(tmux list-windows -t main -F $'#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity_flag}\t#{pane_current_path}\t#{window_name}' 2>/dev/null) |
-sort -t$'\t' -s -k1,1 -k2,2 |
-while IFS=$'\t' read -r g idx target display; do
-  [[ $g == "$prev" ]] || { printf '\t%s%s%s\n' "$DIM" "$g" "$RST"; prev=$g; }
-  printf '%s\t%s\n' "$target" "$display"
-done
-orphans=$(children "" workers 9999 | cut -f3-)
-[[ -n $orphans ]] && { printf '\t%sworkers%s\n' "$DIM" "$RST"; printf '%s\n' "$orphans"; }
+{ sort -t$'\t' -s -k1,1 -k2,2; children "" workers 9999; } |
+render
 exit 0

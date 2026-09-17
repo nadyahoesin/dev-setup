@@ -17,12 +17,12 @@ link() {  # link SRC DST — symlink, backing up a real file if one is in the wa
 
 if [ "$what" = all ] || [ "$what" = terminal ]; then
   say "dependencies (brew)"
-  for f in ghostty; do brew list --cask "$f" >/dev/null 2>&1 || brew install --cask "$f"; done
+  for f in ghostty font-jetbrains-mono; do brew list --cask "$f" >/dev/null 2>&1 || brew install --cask "$f"; done
   for f in tmux fzf jq glow; do brew list "$f" >/dev/null 2>&1 || brew install "$f"; done
 
   say "tmux"
   link "$REPO/tmux/tmux.conf" "$HOME/.tmux.conf"
-  for f in ui.conf ghostty-ui.sh sidebar.sh sidebar-list.sh sidebar-refresh.sh sidebar-click.sh sidebar-pos.sh sidebar-nav.sh sidebar-redraw.sh sidebar-poll.sh agent-state.sh open-url.sh md-view.sh keys-help.sh md-sidebar.sh mdview.py md-click.sh md-click-parse.py glow-sidebar.json copy-release.sh agent-notify.sh selftest.sh clicktest.py; do
+  for f in ui.conf ghostty-ui.sh sidebar.sh sidebar-list.sh sidebar-refresh.sh sidebar-click.sh sidebar-pos.sh sidebar-nav.sh sidebar-redraw.sh sidebar-poll.sh sidebar-style.sh sidebar-view.sh sidebar-scrolld.py agent-state.sh open-url.sh md-view.sh keys-help.sh md-sidebar.sh mdview.py md-click.sh md-click-parse.py glow-sidebar.json copy-release.sh agent-notify.sh selftest.sh clicktest.py; do
     link "$REPO/tmux/$f" "$HOME/.config/tmux/$f"
   done
 

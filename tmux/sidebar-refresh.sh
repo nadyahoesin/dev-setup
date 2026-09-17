@@ -13,6 +13,8 @@ unset TMUX   # always address the default ("main") server, not the outer ui one
 SOCK="${TMPDIR:-/tmp}/tmux-sidebar-$UID.sock"
 [ -S "$SOCK" ] || exit 0
 LIST="$HOME/.config/tmux/sidebar-list.sh"
+VIEW="$HOME/.config/tmux/sidebar-view.sh"
+ALL="${TMPDIR:-/tmp}/tmux-sidebar-$UID.all"       # every row; the view slices it
 CACHE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.rows"     # last rows sent to fzf (sidebar-pos.sh reads it too)
 POS="${TMPDIR:-/tmp}/tmux-sidebar-$UID.pos"        # "pos(N)" for the active tab in $CACHE (fzf's load handler cats it)
 LOCK="${TMPDIR:-/tmp}/tmux-sidebar-$UID.lock"
@@ -25,13 +27,15 @@ refresh() {  # only bother fzf when the rows actually changed
   # and broke next/prev (they navigate the cached rows) until the next real
   # change. Retry once, then keep what we have.
   if [ -z "$new" ]; then sleep 0.1; new=$("$LIST"); [ -n "$new" ] || return 0; fi
+  printf '%s\n' "$new" > "$ALL.tmp" && mv -f "$ALL.tmp" "$ALL"
+  new=$("$VIEW")                 # the rows that fit, at the scroll offset
   [ "$new" = "$(<"$CACHE")" ] && return 0
   # cursor row = the line whose target is the active window (marker "▶" in the
   # display column). Computed here, in bash, so fzf can be told the position in
   # the same request as the reload instead of shelling out again on `load`.
   while IFS= read -r line; do
     i=$((i + 1))
-    case "$line" in *$'\t  ▶ '*) n=$i; break ;; esac
+    case "$line" in *$'\t▶') n=$i; break ;; esac
   done <<< "$new"
   [ "$n" -gt 0 ] || n=1
   printf '%s\n' "$new" > "$CACHE.tmp" && mv -f "$CACHE.tmp" "$CACHE"

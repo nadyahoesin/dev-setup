@@ -9,10 +9,6 @@ exec 2>/dev/null   # never let a stray error reach tmux/fzf output
 CACHE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.rows"   # the rows fzf just loaded
 POS="${TMPDIR:-/tmp}/tmux-sidebar-$UID.pos"
 if [ -s "$POS" ] && [ ! "$CACHE" -nt "$POS" ]; then cat "$POS"; exit 0; fi
-cur=$(tmux list-clients -F '#{client_session}' 2>/dev/null | head -1)
-if [ -n "$cur" ] && [ "${cur#pisub-}" != "$cur" ]; then want="v:$cur"
-elif [ -n "$cur" ] && [ "$cur" != main ]; then want="s:$cur"
-else want="$(tmux display -t main -p '#{window_id}' 2>/dev/null)"; fi
-[ -s "$CACHE" ] || "$HOME/.config/tmux/sidebar-list.sh" > "$CACHE"
-n=$(cut -f1 "$CACHE" | grep -n -x -F -- "$want" | head -1 | cut -d: -f1)
+[ -s "$CACHE" ] || { "$HOME/.config/tmux/sidebar-list.sh" > "${TMPDIR:-/tmp}/tmux-sidebar-$UID.all"; "$HOME/.config/tmux/sidebar-view.sh" > "$CACHE"; }
+n=$(grep -n $'\t▶$' "$CACHE" | head -1 | cut -d: -f1)
 echo "pos(${n:-1})"

@@ -1,9 +1,13 @@
 font-family = JetBrains Mono
-font-size = 12.5
-# Retina: full-strength thickening at a small size smears glyphs together;
-# a light touch plus gamma-correct blending keeps strokes crisp on the dark bg
-font-thicken = true
-font-thicken-strength = 150
+font-size = 13
+# Weight comes from the real font, not smearing: font-thicken fattens every glyph
+# by blurring its edges (the "bleedy" look). The installed variable JetBrains
+# Mono (brew cask font-jetbrains-mono) gives a clean Medium instead.
+font-thicken = false
+font-variation = wght=600
+font-variation-bold = wght=800
+font-variation-italic = wght=600
+font-variation-bold-italic = wght=800
 adjust-cell-height = 12%
 font-feature = -calt
 # never blink, whatever the app's DECSCUSR asks for (Claude Code/Codex request a
@@ -46,6 +50,10 @@ unfocused-split-fill = #000000
 confirm-close-surface = false
 
 keybind = super+enter=toggle_fullscreen
+# ⌘+ / ⌘- in half-point steps (the default whole point jumps too far)
+keybind = super+equal=increase_font_size:0.5
+keybind = super+plus=increase_font_size:0.5
+keybind = super+minus=decrease_font_size:0.5
 
 # ── tmux is the tab manager ─────────────────────────────────────────
 # Every Ghostty window attaches to the shared tmux session "main"

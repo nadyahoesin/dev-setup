@@ -1,23 +1,32 @@
 #!/usr/bin/env bash
 # Outer-tmux mouse handler: a left click at row $1 of the sidebar pane.
-# Screen rows 0-1 are fzf's top margin, 2-3 the "TABS" header (+ blank line);
-# then each list row takes two screen rows (item, then a --gap line).
+# Every cache line takes one screen row; line 1 (screen row 0) is a blank parking row.
 # List rows come from sidebar-list.sh, whose
 # first field is the target: "@id" = tab in main, "" = group header (no-op).
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 unset TMUX
+export LC_ALL=en_US.UTF-8   # ${#var} counts characters (fold-glyph column)
 exec 2>/dev/null   # never let a stray error reach tmux/fzf output
-y=$(( ${1:-0} - 4 ))   # screen row → offset below the header
-x=${2:--1}             # screen column; the ▾/▸ fold glyph of a tab row sits at 6
-[ "$y" -ge 0 ] 2>/dev/null || exit 0
-[ $(( y % 2 )) -eq 0 ] || exit 0          # clicked a gap line
-y=$(( y / 2 + 1 ))                        # list row
+y=$(( ${1:-0} + 1 ))      # screen row N shows cache line N+1 (line 1 is the blank parking row)
+x=${2:--1}               # screen column (content starts at 2: fzf margin + gutter)
+[ "$y" -ge 2 ] 2>/dev/null || exit 0
 CACHE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.rows"   # what the sidebar is showing right now
-[ -s "$CACHE" ] || "$HOME/.config/tmux/sidebar-list.sh" > "$CACHE"
+[ -s "$CACHE" ] || { "$HOME/.config/tmux/sidebar-list.sh" > "${TMPDIR:-/tmp}/tmux-sidebar-$UID.all"; "$HOME/.config/tmux/sidebar-view.sh" > "$CACHE"; }
 target=$(sed -n "${y}p" "$CACHE" | cut -f1)
 COLLAPSED_FILE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.collapsed"
+# did the click land on this row's fold glyph (▸/▾)? Its column depends on the
+# sidebar style (boxes shift it), so find it in the row itself.
+on_fold() {
+  local vis n
+  vis=$(sed -n "${y}p" "$CACHE" | cut -f2 | sed $'s/\x1b\\[[0-9;]*m//g')
+  # bash 3.2 matches multibyte glyphs byte-wise (▸ shares bytes with ─), so let
+  # grep/sed/wc do the Unicode work
+  printf '%s' "$vis" | grep -q '[▾▸]' || return 1
+  n=$(printf '%s' "$vis" | sed 's/[▾▸].*//' | wc -m | tr -d ' ')
+  [ "$x" -ge $(( n + 1 )) ] && [ "$x" -le $(( n + 3 )) ]
+}
 case "$target" in
-  @*) if [ "$x" -ge 5 ] && [ "$x" -le 7 ] && sed -n "${y}p" "$CACHE" | cut -f2 | grep -q '[▾▸]'; then
+  @*) if on_fold; then
         # clicked the fold glyph of a tab that has worker children: toggle them
         if grep -qx -- "$target" "$COLLAPSED_FILE" 2>/dev/null; then
           grep -vx -- "$target" "$COLLAPSED_FILE" > "$COLLAPSED_FILE.tmp"; mv -f "$COLLAPSED_FILE.tmp" "$COLLAPSED_FILE"
@@ -32,7 +41,7 @@ case "$target" in
         exec "$HOME/.config/tmux/sidebar-refresh.sh"
       fi
       for c in $(tmux list-clients -F '#{client_tty}'); do tmux switch-client -c "$c" -t "main:$target"; done ;;
-  s:*) if [ "$x" -ge 11 ] && [ "$x" -le 13 ] && sed -n "${y}p" "$CACHE" | cut -f2 | grep -q '[▾▸]'; then
+  s:*) if on_fold; then
         # clicked the fold glyph of a worker that started nested `pi -p` runs
         sess=${target#s:}; EXPANDED_FILE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.expanded"
         if grep -qx -- "$sess" "$EXPANDED_FILE" 2>/dev/null; then
