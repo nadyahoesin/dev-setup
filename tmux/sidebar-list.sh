@@ -23,6 +23,7 @@ W=${SIDEBAR_WIDTH:-$PW}
 echo "$W $PH" > "${TMPDIR:-/tmp}/tmux-sidebar-$UID.size"
 PAD=$((W - 7))          # fzf left margin 2 + "  " indent + marker + " " + name, one col spare
 DIM=$'\e[2m'; RST=$'\e[0m'
+CLOSE=$'\e[38;2;221;221;221m'   # the tab's ✕, same light grey as the file viewer's
 fit() {  # fit <text> <max columns> → $REPLY_F, cut with … only when it doesn't fit
   local t=$1 m=$2
   (( m < 1 )) && m=1
@@ -65,10 +66,23 @@ ACT=" "
 # Pane shells whose Claude Code still has a shell running after its turn ended —
 # typically a run_in_background `agent-session.sh wait` on subagents. Claude runs
 # every Bash call as `zsh -c source …/.claude/shell-snapshots/…` under its own pid.
-BGSHELL=" $(ps -Ao pid=,ppid=,command= 2>/dev/null | awk '
-  $3 ~ /\/claude$/ || $3 ~ /\/\.local\/bin\/claude/ { parent[$1] = $2 }
-  /\.claude\/shell-snapshots\// { busy[$2] = 1 }
-  END { for (c in busy) if (c in parent) printf "%s ", parent[c] }') "
+# A full process scan is half the cost of drawing the sidebar, and this is the
+# one thing in it that cannot change between two consecutive frames in a way
+# anyone would notice — so it is cached for a second. Redrawing on a tab switch
+# is what has to feel instant.
+BG_CACHE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.bgshell"
+BGSHELL=""
+if [[ -f $BG_CACHE ]]; then
+  bg_age=$(( EPOCHSECONDS - $(stat -f %m "$BG_CACHE" 2>/dev/null || echo 0) ))
+  (( bg_age <= 1 )) && read -r BGSHELL < "$BG_CACHE"
+fi
+if [[ -z $BGSHELL ]]; then
+  BGSHELL=" $(ps -Ao pid=,ppid=,command= 2>/dev/null | awk '
+    $3 ~ /\/claude$/ || $3 ~ /\/\.local\/bin\/claude/ { parent[$1] = $2 }
+    /\.claude\/shell-snapshots\// { busy[$2] = 1 }
+    END { for (c in busy) if (c in parent) printf "%s ", parent[c] }') "
+  printf '%s\n' "$BGSHELL" > "$BG_CACHE.tmp" && mv -f "$BG_CACHE.tmp" "$BG_CACHE"
+fi
 while IFS='|' read -r wid st cmd ppid; do   # '|' not tab: tabs are IFS whitespace and an empty @agent_state would collapse
   a=""
   [[ -z $st && $BGSHELL == *" $ppid "* ]] && st=working
@@ -190,9 +204,11 @@ BOR=$'\e[38;2;42;74;80m'       # faint teal, same as the md viewer's rules
 shopt -s extglob
 rep() { local out="" i; for ((i = 0; i < $2; i++)); do out+=$1; done; REPLY_R=$out; }
 vis() { REPLY_V=${1//$'\e['*([0-9;])m/}; }
-row() {  # row <target> <display-with-optional-\t▶>
-  local t=$1 d=$2 cm="" hl="" n
+row() {  # row <target> <display[\x01right-aligned part][\t▶]>
+  local t=$1 d=$2 cm="" hl="" n dr="" wl wr
   [[ $d == *$'\t▶' ]] && { cm=$'\t▶'; d=${d%$'\t▶'}; }
+  # anything after \x01 is pushed to the right edge of the row (the ✕)
+  [[ $d == *$'\x01'* ]] && { dr=${d#*$'\x01'}; d=${d%%$'\x01'*}; }
   # The active tab is highlighted in the row itself, not by fzf's cursor: fzf's
   # cursor can't leave the screen, so it stuck to the top when you scrolled the
   # active tab away. A scrolled-off row simply takes its highlight with it.
@@ -201,17 +217,20 @@ row() {  # row <target> <display-with-optional-\t▶>
     d="${d//$'\e[0m'/$'\e[0m'$hl}"
     d="${d//$'\e[39m'/$'\e[39m'$hl}"
     d="${d//$'\e[22;39m'/$'\e[22;39m'$hl}"
+    dr="${dr//$'\e[0m'/$'\e[0m'$hl}"
   fi
   case "$STYLE" in
     cards|sections)
-      vis "$d"; n=$(( CW - 3 - ${#REPLY_V} )); (( n < 0 )) && n=0
+      vis "$d"; wl=${#REPLY_V}; vis "$dr"; wr=${#REPLY_V}
+      n=$(( CW - 3 - wl - wr )); (( n < 0 )) && n=0
       if [[ -n $cm ]]; then
-        printf '%s\t%s┃%s%s %s%*s%s%s│%s%s\n' "$t" $'\e[38;2;64;212;231m' "$RST" "$hl" "$d" "$n" '' "$RST" "$BOR" "$RST" "$cm"
+        printf '%s\t%s┃%s%s %s%*s%s%s%s│%s%s\n' "$t" $'\e[38;2;64;212;231m' "$RST" "$hl" "$d" "$n" '' "$dr" "$RST" "$BOR" "$RST" "$cm"
       else
-        printf '%s\t%s│%s %s%*s%s│%s%s\n' "$t" "$BOR" "$RST" "$d" "$n" '' "$BOR" "$RST" "$cm"
+        printf '%s\t%s│%s %s%*s%s%s│%s%s\n' "$t" "$BOR" "$RST" "$d" "$n" '' "$dr" "$BOR" "$RST" "$cm"
       fi ;;
-    *) vis "$d"; n=$(( CW - ${#REPLY_V} )); (( n < 0 )) && n=0
-       [[ -n $cm ]] && printf '%s\t%s%s%*s%s%s\n' "$t" "$hl" "$d" "$n" '' "$RST" "$cm" || printf '%s\t%s\n' "$t" "$d" ;;
+    *) vis "$d"; wl=${#REPLY_V}; vis "$dr"; wr=${#REPLY_V}
+       n=$(( CW - wl - wr )); (( n < 0 )) && n=0
+       [[ -n $cm ]] && printf '%s\t%s%s%*s%s%s%s\n' "$t" "$hl" "$d" "$n" '' "$dr" "$RST" "$cm" || printf '%s\t%s%*s%s\n' "$t" "$d" "$n" '' "$dr" ;;
   esac
 }
 rule() {  # rule <left> <fill> <right> [title]
@@ -289,12 +308,13 @@ while IFS=$'\t' read -r id idx active act path name; do
     # tab again, and its workers reappear by themselves if one is given a turn
     if (( REPLY_B > 0 )); then tail="$tail ${YEL}⋯${REPLY_B}${RST}"; tw=$((tw + 2 + ${#REPLY_B})); fi
   fi
-  room; fit "$name" $(( REPLY_ROOM - 4 - tw )); name=$REPLY_F
+  room; fit "$name" $(( REPLY_ROOM - 4 - tw - 2 )); name=$REPLY_F   # -2: the ✕ column
   # no activity dot but unseen output: a dim dot in the same column
   [[ $REPLY_A == "  " && $act == 1 ]] && REPLY_A="${DIM}•${RST} "
   cm=""; [[ $m == "▶" ]] && cm=$'\t▶'
   # tab names stand out from the terminal text: bold, bright white (terminals have one font size)
-  printf '%s\t%04d\t%s\t%s %s%s%s%s%s%s\n' "$REPLY" "$idx" "$id" "$fold" "$REPLY_A" $'\e[1;97m' "$name" $'\e[22;39m' "$tail" "$cm"
+  # ✕ at the right edge closes the tab, the same as ⌘W
+  printf '%s\t%04d\t%s\t%s %s%s%s%s%s%s%s%s\n' "$REPLY" "$idx" "$id" "$fold" "$REPLY_A" $'\e[1;97m' "$name" $'\e[22;39m' "$tail" $'\x01'"${CLOSE}✕${RST} " "$cm"
   children "$id" "$REPLY" "$idx" "$showall"
 done < <(tmux list-windows -t main -F $'#{window_id}\t#{window_index}\t#{window_active}\t#{window_activity_flag}\t#{pane_current_path}\t#{window_name}' 2>/dev/null) |
 { sort -t$'\t' -s -k1,1 -k2,2; children "" workers 9999; } |

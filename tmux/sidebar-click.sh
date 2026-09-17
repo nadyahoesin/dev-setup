@@ -25,8 +25,21 @@ on_fold() {
   n=$(printf '%s' "$vis" | sed 's/[▾▸].*//' | wc -m | tr -d ' ')
   [ "$x" -ge $(( n + 1 )) ] && [ "$x" -le $(( n + 3 )) ]
 }
+# did the click land on this row's ✕ (right edge of a tab's card)?
+on_close() {
+  local vis n
+  vis=$(sed -n "${y}p" "$CACHE" | cut -f2 | sed $'s/\x1b\\[[0-9;]*m//g')
+  printf '%s' "$vis" | grep -q '✕' || return 1
+  n=$(printf '%s' "$vis" | sed 's/✕.*//' | wc -m | tr -d ' ')
+  [ "$x" -ge $(( n + 1 )) ] && [ "$x" -le $(( n + 3 )) ]
+}
 case "$target" in
-  @*) if on_fold; then
+  @*) if on_close; then
+        # same as ⌘W: close the tab's active pane
+        tmux kill-pane -t "main:$target"
+        exec "$HOME/.config/tmux/sidebar-refresh.sh"
+      fi
+      if on_fold; then
         # clicked the fold glyph: show this tab's finished workers, or hide them again
         if grep -qx -- "$target" "$SHOWALL_FILE" 2>/dev/null; then
           grep -vx -- "$target" "$SHOWALL_FILE" > "$SHOWALL_FILE.tmp"; mv -f "$SHOWALL_FILE.tmp" "$SHOWALL_FILE"
