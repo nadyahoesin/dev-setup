@@ -27,8 +27,20 @@ case "$want" in
     # only a permission / question prompt means "needs you"; the 60s idle nudge doesn't
     kind=$(printf '%s' "$json" | jq -r '(.notification_type // "") + " " + (.message // "")')
     case "$kind" in *permission*|*approval*|*question*) want=waiting ;; *) exit 0 ;; esac ;;
-  pre|working)                     # PreToolUse / PostToolUse: only inside an open turn
-    [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_turn}')" = 1 ] || exit 0
+  pre|working)                     # PreToolUse / PostToolUse
+    if [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_turn}')" != 1 ]; then
+      # No turn open, yet a tool is running. Either a PostToolUse straggler from
+      # the turn that just ended (they land right after the synchronous Stop),
+      # or a turn whose UserPromptSubmit we never saw — a session resumed from
+      # the command line, say — which would otherwise sit "idle" for its whole
+      # run. Anything but the first seconds after Stop is taken as a live turn.
+      if [ "$want" = working ]; then
+        at=$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_idle_at}'); at=${at:-0}
+        since=$(( $(date +%s) - at ))
+        [ "$since" -le 10 ] 2>/dev/null && exit 0
+      fi
+      turn=1
+    fi
     # A question or permission prompt (Notification -> waiting) sits *inside* an
     # open turn, and a late PostToolUse — a backgrounded agent's, say — would
     # otherwise paint the tab yellow again while it is still waiting on you.
@@ -38,7 +50,8 @@ case "$want" in
     want=working ;;
 esac
 [ "$turn" = 1 ] && TMUX= $T set -p -t "$TMUX_PANE" @agent_turn 1
-[ "$turn" = 0 ] && TMUX= $T set -p -u -t "$TMUX_PANE" @agent_turn
+[ "$turn" = 0 ] && { TMUX= $T set -p -u -t "$TMUX_PANE" @agent_turn
+                     TMUX= $T set -p -t "$TMUX_PANE" @agent_idle_at "$(date +%s)"; }
 cur=$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_state}')
 [ "$cur" = "$want" ] && exit 0          # PostToolUse fires constantly; only redraw on a change
 if [ -n "$want" ]; then TMUX= $T set -p -t "$TMUX_PANE" @agent_state "$want"
