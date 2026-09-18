@@ -54,8 +54,12 @@ export default function (pi: ExtensionAPI) {
 	const clear = () => {
 		current = "";
 		run(TMUX, ["set", "-p", "-u", "-t", pane, "@agent_state"]);
+		run(TMUX, ["set", "-p", "-u", "-t", pane, "@agent_kind"]);
 		run(REFRESH, []);
 	};
+
+	// the sidebar tints a pi tab differently from a Claude Code one
+	run(TMUX, ["set", "-p", "-t", pane, "@agent_kind", "pi"]);
 
 	pi.on("session_start", async () => set("idle"));
 	pi.on("agent_start", async () => {

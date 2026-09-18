@@ -14,6 +14,11 @@ json=$(cat)
 [ -n "${TMUX_PANE:-}" ] || exit 0
 T=/opt/homebrew/bin/tmux
 want=$1
+# which agent owns this pane, so the sidebar can tell Claude Code from pi
+# (pi sets this from its tmux-agent-state extension). Only written when it
+# changes: this hook runs on every tool call.
+[ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_kind}')" = claude ] ||
+  TMUX= $T set -p -t "$TMUX_PANE" @agent_kind claude
 turn=""     # 1 = open the turn, 0 = close it, empty = leave it as it is
 case "$want" in
   prompt) want=working turn=1 ;;   # UserPromptSubmit
@@ -22,8 +27,15 @@ case "$want" in
     # only a permission / question prompt means "needs you"; the 60s idle nudge doesn't
     kind=$(printf '%s' "$json" | jq -r '(.notification_type // "") + " " + (.message // "")')
     case "$kind" in *permission*|*approval*|*question*) want=waiting ;; *) exit 0 ;; esac ;;
-  working)                         # PostToolUse: only valid inside an open turn
-    [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_turn}')" = 1 ] || exit 0 ;;
+  pre|working)                     # PreToolUse / PostToolUse: only inside an open turn
+    [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_turn}')" = 1 ] || exit 0
+    # A question or permission prompt (Notification -> waiting) sits *inside* an
+    # open turn, and a late PostToolUse — a backgrounded agent's, say — would
+    # otherwise paint the tab yellow again while it is still waiting on you.
+    # Only a tool actually starting (PreToolUse) means work resumed.
+    if [ "$want" = working ] &&
+       [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_state}')" = waiting ]; then exit 0; fi
+    want=working ;;
 esac
 [ "$turn" = 1 ] && TMUX= $T set -p -t "$TMUX_PANE" @agent_turn 1
 [ "$turn" = 0 ] && TMUX= $T set -p -u -t "$TMUX_PANE" @agent_turn

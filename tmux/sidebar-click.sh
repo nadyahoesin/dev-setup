@@ -13,7 +13,7 @@ x=${2:--1}               # screen column (content starts at 2: fzf margin + gutt
 CACHE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.rows"   # what the sidebar is showing right now
 [ -s "$CACHE" ] || { "$HOME/.config/tmux/sidebar-list.sh" > "${TMPDIR:-/tmp}/tmux-sidebar-$UID.all"; "$HOME/.config/tmux/sidebar-view.sh" > "$CACHE"; }
 target=$(sed -n "${y}p" "$CACHE" | cut -f1)
-SHOWALL_FILE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.showall"   # tabs listing their finished workers too
+COLLAPSED_FILE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.collapsed"   # tabs whose worker list is folded away
 # did the click land on this row's fold glyph (▸/▾)? Its column depends on the
 # sidebar style (boxes shift it), so find it in the row itself.
 on_fold() {
@@ -40,16 +40,17 @@ case "$target" in
         exec "$HOME/.config/tmux/sidebar-refresh.sh"
       fi
       if on_fold; then
-        # clicked the fold glyph: show this tab's finished workers, or hide them again
-        if grep -qx -- "$target" "$SHOWALL_FILE" 2>/dev/null; then
-          grep -vx -- "$target" "$SHOWALL_FILE" > "$SHOWALL_FILE.tmp"; mv -f "$SHOWALL_FILE.tmp" "$SHOWALL_FILE"
-          # hiding the tab whose worker you're watching: go back to that tab
+        # clicked the fold glyph: hide this tab's workers, or list them again
+        if grep -qx -- "$target" "$COLLAPSED_FILE" 2>/dev/null; then
+          grep -vx -- "$target" "$COLLAPSED_FILE" > "$COLLAPSED_FILE.tmp"; mv -f "$COLLAPSED_FILE.tmp" "$COLLAPSED_FILE"
+        else
+          echo "$target" >> "$COLLAPSED_FILE"
+          # folding away the worker you're watching: go back to its tab
           cur=$(tmux list-clients -F '#{client_session}' | head -1)
+          case "$cur" in pisub-*) cur=${cur#pisub-}; cur=${cur%%--*} ;; esac
           if [ "$cur" != main ] && grep -qx "parent_window=$target" "$HOME/.orchestrate-subagents/$cur.env" 2>/dev/null; then
             for c in $(tmux list-clients -F '#{client_tty}'); do tmux switch-client -c "$c" -t "main:$target"; done
           fi
-        else
-          echo "$target" >> "$SHOWALL_FILE"
         fi
         exec "$HOME/.config/tmux/sidebar-refresh.sh"
       fi

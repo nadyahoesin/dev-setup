@@ -49,7 +49,7 @@ EOF
   jq --slurpfile h "$REPO/claude/hooks.json" '
     .hooks //= {} |
     reduce ($h[0] | to_entries[]) as $e (.;
-      .hooks[$e.key] = (((.hooks[$e.key] // []) | map(select(.hooks[0].command != $e.value[0].hooks[0].command))) + $e.value))
+      .hooks[$e.key] = (((.hooks[$e.key] // []) | map(select(([.hooks[].command] - [$e.value[].hooks[].command]) == [.hooks[].command]))) + $e.value))
   ' "$S" > "$S.tmp" && mv "$S.tmp" "$S"
 
   say "ssh: reuse the GitHub connection (every fetch/push otherwise pays a ~2 s handshake)"

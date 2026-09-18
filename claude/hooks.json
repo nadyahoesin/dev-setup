@@ -1,5 +1,9 @@
 {
-  "Stop":         [{ "hooks": [{ "type": "command", "command": "~/.config/tmux/agent-notify.sh" }] }],
-  "Notification": [{ "hooks": [{ "type": "command", "command": "~/.config/tmux/agent-notify.sh" }] }],
-  "PreToolUse":   [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.config/claude/guard-search.sh" }] }]
+  "SessionStart":     [{ "hooks": [{ "type": "command", "command": "~/.config/tmux/agent-state.sh idle" }] }],
+  "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "~/.config/tmux/agent-state.sh prompt" }] }],
+  "Stop":             [{ "hooks": [{ "type": "command", "command": "~/.config/tmux/agent-notify.sh" }, { "type": "command", "command": "~/.config/tmux/agent-state.sh idle" }] }],
+  "Notification":     [{ "hooks": [{ "type": "command", "command": "~/.config/tmux/agent-notify.sh" }, { "type": "command", "command": "~/.config/tmux/agent-state.sh notify" }] }],
+  "PreToolUse":       [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.config/claude/guard-search.sh" }] },
+                       { "hooks": [{ "type": "command", "command": "~/.config/tmux/agent-state.sh pre" }] }],
+  "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "~/.config/tmux/agent-state.sh working" }] }]
 }
