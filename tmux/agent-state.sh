@@ -28,6 +28,12 @@ case "$want" in
     kind=$(printf '%s' "$json" | jq -r '(.notification_type // "") + " " + (.message // "")')
     case "$kind" in *permission*|*approval*|*question*) want=waiting ;; *) exit 0 ;; esac ;;
   pre|working)                     # PreToolUse / PostToolUse
+    # AskUserQuestion and ExitPlanMode block on you by definition, so they say
+    # "needs you" themselves. Notification can't be relied on for it: it is a
+    # notification, and one doesn't always arrive for a question — a tab asking
+    # one would then keep the yellow dot its own PreToolUse just set.
+    blocking=""
+    case "$json" in *'"tool_name":"AskUserQuestion"'*|*'"tool_name":"ExitPlanMode"'*) blocking=1 ;; esac
     if [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_turn}')" != 1 ]; then
       # No turn open, yet a tool is running. Either a PostToolUse straggler from
       # the turn that just ended (they land right after the synchronous Stop),
@@ -41,13 +47,16 @@ case "$want" in
       fi
       turn=1
     fi
-    # A question or permission prompt (Notification -> waiting) sits *inside* an
-    # open turn, and a late PostToolUse — a backgrounded agent's, say — would
-    # otherwise paint the tab yellow again while it is still waiting on you.
-    # Only a tool actually starting (PreToolUse) means work resumed.
-    if [ "$want" = working ] &&
-       [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_state}')" = waiting ]; then exit 0; fi
-    want=working ;;
+    if [ "$want" = pre ] && [ -n "$blocking" ]; then want=waiting
+    else
+      # A question or permission prompt sits *inside* an open turn, and a late
+      # PostToolUse — a backgrounded agent's, say — would otherwise paint the
+      # tab yellow again while it is still waiting on you. Only a tool actually
+      # starting, or the blocking tool itself finishing, means work resumed.
+      if [ "$want" = working ] && [ -z "$blocking" ] &&
+         [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_state}')" = waiting ]; then exit 0; fi
+      want=working
+    fi ;;
 esac
 [ "$turn" = 1 ] && TMUX= $T set -p -t "$TMUX_PANE" @agent_turn 1
 [ "$turn" = 0 ] && { TMUX= $T set -p -u -t "$TMUX_PANE" @agent_turn
