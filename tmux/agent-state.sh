@@ -37,7 +37,14 @@ remember() {
 }
 case "$want" in
   prompt) want=working turn=1; remember ;;   # UserPromptSubmit
-  idle)   want=idle    turn=0 ;;   # Stop — said explicitly, so the sidebar can show a grey dot
+  idle)   # Stop, and SessionStart — said explicitly, so the sidebar shows a grey dot.
+    # Except a compaction: it fires SessionStart in the middle of the very turn
+    # it is compacting, and closing the turn there strands the tab grey for the
+    # rest of that turn — every event after it carries the running turn's id,
+    # which is by then one we have already seen, and so reads as old work.
+    # `source` is SessionStart's alone (startup/resume/clear/compact/fork).
+    [ "$(printf '%s' "$json" | jq -r '.source // ""')" = compact ] && exit 0
+    want=idle turn=0 ;;
   notify)
     # only a permission / question prompt means "needs you"; the 60s idle nudge doesn't
     kind=$(printf '%s' "$json" | jq -r '(.notification_type // "") + " " + (.message // "")')
