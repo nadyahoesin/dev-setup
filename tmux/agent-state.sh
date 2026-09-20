@@ -20,8 +20,23 @@ want=$1
 [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_kind}')" = claude ] ||
   TMUX= $T set -p -t "$TMUX_PANE" @agent_kind claude
 turn=""     # 1 = open the turn, 0 = close it, empty = leave it as it is
+
+# Every hook event names the turn it belongs to (prompt_id), and a background
+# agent's tool calls keep the id of the turn that spawned them. That is the one
+# signal that separates "this pane is working" from "something the last turn
+# left running" — session_id and transcript_path are the parent's for both.
+# Ids we have already seen are remembered per pane, capped.
+pid=$(printf '%s' "$json" | jq -r '.prompt_id // ""')
+SEEN="${TMPDIR:-/tmp}/tmux-agent-turns-$UID-${TMUX_PANE#%}"
+seen() { [ -n "$pid" ] && [ -f "$SEEN" ] && grep -qxF -- "$pid" "$SEEN"; }
+remember() {
+  [ -n "$pid" ] || return 0
+  seen || printf '%s\n' "$pid" >> "$SEEN"
+  [ "$(wc -l < "$SEEN")" -gt 50 ] && { tail -25 "$SEEN" > "$SEEN.tmp" && mv -f "$SEEN.tmp" "$SEEN"; }
+  return 0
+}
 case "$want" in
-  prompt) want=working turn=1 ;;   # UserPromptSubmit
+  prompt) want=working turn=1; remember ;;   # UserPromptSubmit
   idle)   want=idle    turn=0 ;;   # Stop — said explicitly, so the sidebar can show a grey dot
   notify)
     # only a permission / question prompt means "needs you"; the 60s idle nudge doesn't
@@ -34,16 +49,18 @@ case "$want" in
     # one would then keep the yellow dot its own PreToolUse just set.
     blocking=""
     case "$json" in *'"tool_name":"AskUserQuestion"'*|*'"tool_name":"ExitPlanMode"'*) blocking=1 ;; esac
-    # No turn open means no foreground turn is running: a tool event here
-    # belongs to a background agent, which does not stop you typing, or is a
-    # straggler from the turn that just ended. Neither is "working".
-    #
-    # This used to take a late event as a turn whose UserPromptSubmit we had
-    # missed, to catch a session started from the command line. It caught
-    # background agents instead and left tabs yellow for hours while their
-    # prompt sat empty — a worse error, because an idle-looking tab you cannot
-    # trust is the whole reason this file exists.
-    [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_turn}')" = 1 ] || exit 0
+    if [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_turn}')" != 1 ]; then
+      # No turn open. Either this belongs to a turn that has already ended —
+      # a straggler, or a background agent it left running, neither of which
+      # stops you typing — or to a turn whose UserPromptSubmit never fired,
+      # as when a session is started with a prompt on the command line. The
+      # id says which: one we have seen is old work, one we have not is a
+      # live turn nobody told us about.
+      seen && exit 0
+      [ -n "$pid" ] || exit 0          # no id to judge by: assume old work
+      remember
+      turn=1
+    fi
     if [ "$want" = pre ] && [ -n "$blocking" ]; then want=waiting
     else
       # A question or permission prompt sits *inside* an open turn, and a late
