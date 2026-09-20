@@ -6,7 +6,8 @@ cat <<EOF
   ${B}Tabs${R}
     ⌘T              new tab
     ⌘W              close pane (closes the tab if it's the only pane)
-    ⌘R              rename tab
+    ⌘R              rename tab (pins the name; the app stops naming it)
+    ⌘⇧R             let the app name the tab again (/rename, pi, folder)
     ⌘1 … ⌘9         go to tab 1–9
     ⌘⇧[  ⌘⇧]        previous / next tab (sidebar order)
     ⌘S              tab & session picker (also worker sessions)

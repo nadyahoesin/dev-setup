@@ -65,6 +65,7 @@ keybind = super+t=text:\x02c
 keybind = super+w=text:\x02x
 keybind = super+s=text:\x02s
 keybind = super+r=text:\x02r
+keybind = super+shift+r=text:\x02A
 keybind = super+shift+left_bracket=text:\x02p
 keybind = super+shift+right_bracket=text:\x02n
 keybind = super+digit_1=text:\x021
