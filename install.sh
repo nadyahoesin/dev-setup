@@ -52,6 +52,10 @@ EOF
       .hooks[$e.key] = (((.hooks[$e.key] // []) | map(select(([.hooks[].command] - [$e.value[].hooks[].command]) == [.hooks[].command]))) + $e.value))
   ' "$S" > "$S.tmp" && mv "$S.tmp" "$S"
 
+  say "pnpm: hardlink packages from the store (a worktree's node_modules costs 40 MB, not 2.6 GB)"
+  N="$HOME/.npmrc"; touch "$N"
+  grep -q '^package-import-method=' "$N" || printf 'package-import-method=hardlink\n' >> "$N"
+
   say "ssh: reuse the GitHub connection (every fetch/push otherwise pays a ~2 s handshake)"
   C="$HOME/.ssh/config"; mkdir -p "$HOME/.ssh"; touch "$C"; chmod 600 "$C"
   grep -q "dev-setup: reuse one SSH connection" "$C" || { printf '\n' >> "$C"; cat "$REPO/ssh/config.snippet" >> "$C"; }
