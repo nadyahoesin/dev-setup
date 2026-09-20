@@ -45,6 +45,8 @@ EOF
 
   say "Claude Code hooks (Stop / Notification → notifier; Bash → search guard)"
   link "$REPO/claude/guard-search.sh" "$HOME/.config/claude/guard-search.sh"
+  mkdir -p "$HOME/.claude/commands"
+  for f in "$REPO"/claude/commands/*.md; do link "$f" "$HOME/.claude/commands/$(basename "$f")"; done
   S="$HOME/.claude/settings.json"; mkdir -p "$HOME/.claude"; [ -f "$S" ] || echo '{}' > "$S"
   jq --slurpfile h "$REPO/claude/hooks.json" '
     .hooks //= {} |
