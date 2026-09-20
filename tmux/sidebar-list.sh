@@ -93,7 +93,10 @@ fi
 while IFS='|' read -r wid st cmd ppid kind; do   # '|' not tab: tabs are IFS whitespace and an empty @agent_state would collapse
   [[ -n $kind ]] && case "$KIND" in *" $wid="*) ;; *) KIND="$KIND$wid=$kind " ;; esac
   a=""
-  [[ -z $st && $BGSHELL == *" $ppid "* ]] && st=working
+  # A turn that ends while a backgrounded Bash call is still running leaves the
+  # agent genuinely working, so "idle" is upgraded here too — not just the empty
+  # state. Otherwise a long sweep looks like nobody is doing anything.
+  [[ ( -z $st || $st == idle ) && $BGSHELL == *" $ppid "* ]] && st=working
   case "$st" in
     waiting) a=3 ;;
     working) a=2 ;;
