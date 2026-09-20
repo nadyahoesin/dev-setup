@@ -119,12 +119,13 @@ activity() {  # indicator for tab $1 in $REPLY_A (visible width 2)
   esac
 }
 
-busy_children() {  # busy worker count under tab $1 in $REPLY_B
-  local i pid; REPLY_B=0
+busy_children() {  # under tab $1: busy workers in $REPLY_B, never-dispatched ones in $REPLY_U
+  local i pid; REPLY_B=0 REPLY_U=0
   for i in "${!W_SESS[@]}"; do
     [[ ${W_PARENT[$i]} == "$1" ]] || continue
     pid=""; [[ -f $STATE/pi/${W_SESS[$i]}/busy ]] && read -r pid < "$STATE/pi/${W_SESS[$i]}/busy"
-    [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && REPLY_B=$((REPLY_B + 1))
+    if [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null; then REPLY_B=$((REPLY_B + 1))
+    elif [[ ! -f $STATE/pi/${W_SESS[$i]}/transcript.log ]]; then REPLY_U=$((REPLY_U + 1)); fi
   done
 }
 # Tabs whose worker list is collapsed (toggled by clicking ▾/▸).
@@ -161,6 +162,10 @@ children() {  # print child rows for tab $1 (group $2, index $3); $4=1 hides the
     busy=""
     pid=""; [[ -f $STATE/pi/$sess/busy ]] && read -r pid < "$STATE/pi/$sess/busy"
     [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && busy="${YEL}●${RST}"
+    # A worker with no transcript was acquired but never dispatched to — a brief
+    # the script rejected, say. It would otherwise look exactly like a finished
+    # one and fold away, which makes a failed dispatch silent.
+    [[ -z $busy && ! -f $STATE/pi/$sess/transcript.log ]] && busy="${DIM}○${RST}"
     # a worker that finished is folded away; the one you are looking at stays
     [[ -z $busy && $sess != "$CUR" && $CUR != "pisub-$sess--"* ]] && continue
     # nested `pi -p` runs this worker started (recorded by the skill's shim/pi)
@@ -306,7 +311,7 @@ while IFS=$'\t' read -r id idx active act path name; do
     # a fold glyph only where there is something to fold: workers still running
     # (or the one being viewed). Once they are all finished the tab shows
     # nothing at all — no glyph, no count — until one gets another turn.
-    if (( REPLY_B > 0 || VIEWING )); then (( collapsed )) && fold="▸" || fold="▾"; fi
+    if (( REPLY_B > 0 || REPLY_U > 0 || VIEWING )); then (( collapsed )) && fold="▸" || fold="▾"; fi
   fi
   activity "$id"
   # the ⋯ spinner glyph is now shown as the activity dot instead
