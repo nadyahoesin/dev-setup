@@ -9,6 +9,31 @@
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 TMUX_BIN=/opt/homebrew/bin/tmux
 
+# agent-notify.sh alert "<subtitle>" "<body>" — an unprompted banner for
+# something that went wrong (a failed acquire/dispatch), not a finished turn.
+# Unlike a turn notification this is NOT suppressed when you are looking at the
+# tab: the error is a line in a tool result the session will scroll past.
+if [ "${1:-}" = alert ]; then
+  agent="Delegation failed"; sub=${2:-}; msg=${3:-}
+  msg=$(printf '%s' "$msg" | tr '\n\r;' '  ,' | tr -d '\000-\037' | cut -c1-160)
+  sub=$(printf '%s' "$sub" | tr -d ';' | cut -c1-60)
+  win=""
+  [ -n "${TMUX_PANE:-}" ] && win=$(TMUX= "$TMUX_BIN" display -t "$TMUX_PANE" -p '#{window_id}' 2>/dev/null)
+  APP="$HOME/Applications/Agent Notifier.app"
+  if [ -x "$APP/Contents/MacOS/agent-notifier" ]; then
+    click="open -b com.mitchellh.ghostty"
+    [ -n "$win" ] && click="TMUX= $TMUX_BIN select-window -t 'main:$win'; $click"
+    q="$HOME/.local/state/agent-notifier/queue"; mkdir -p "$q"
+    jq -n --arg id "delegation-${win:-$$}" --arg t "$agent" --arg s "$sub" --arg b "$msg" --arg x "$click" \
+       '{id:$id,title:$t,subtitle:$s,body:$b,exec:$x}' > "$q/$$.tmp" && mv "$q/$$.tmp" "$q/$(date +%s)-$$.json"
+    pgrep -f "Agent Notifier.app/Contents/MacOS/agent-notifier" >/dev/null ||
+      open -g -a "$APP" 2>/dev/null || { nohup "$APP/Contents/MacOS/agent-notifier" >/dev/null 2>&1 & disown; }
+  else
+    osascript -e "display notification \"$msg\" with title \"$agent\" subtitle \"$sub\"" >/dev/null 2>&1
+  fi
+  exit 0
+fi
+
 if [ "${1:-}" = codex ]; then
   agent="Codex"; json=${2:-}
   msg=$(printf '%s' "$json" | jq -r '.["last-assistant-message"] // "Turn complete"' 2>/dev/null)
