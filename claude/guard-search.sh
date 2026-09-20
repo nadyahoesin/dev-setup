@@ -24,4 +24,14 @@ if printf '%s' "$bare" | grep -Eq '(^|[;&|(]|\s)find\s+[^|;&]*' && ! printf '%s'
   echo "blocked: find walks node_modules and every worktree. Use fd (respects .gitignore): fd 'name' path  — or the Glob tool. (find with -maxdepth 0-2 is allowed.)" >&2
   exit 2
 fi
+# `$S wait <session> &` is not backgrounding: only a harness-tracked task
+# notifies the session, so a shell-backgrounded wait finishes in silence and
+# the fleet sits done with nobody reading it. One Bash call per worker, with
+# the tool's own run_in_background.
+if printf '%s' "$bare" | awk '
+  /(agent-session\.sh|\$S)[^|;]*[ \t]wait[ \t]/ && /&[ \t]*$/ && !/&&[ \t]*$/ { found = 1 }
+  END { exit found ? 0 : 1 }'; then
+  echo "blocked: a shell '&' does not background a wait — only a harness-tracked task notifies you, so the worker would finish in silence. Run ONE Bash call per worker: agent-session.sh wait <session>, with the tool's run_in_background: true." >&2
+  exit 2
+fi
 exit 0
