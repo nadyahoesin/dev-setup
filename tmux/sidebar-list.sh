@@ -81,7 +81,10 @@ BG_CACHE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.bgshell"
 BGSHELL=""
 if [[ -f $BG_CACHE ]]; then
   bg_age=$(( NOW - $(stat -f %m "$BG_CACHE" 2>/dev/null || echo 0) ))
-  (( bg_age >= 0 && bg_age <= 1 )) && read -r BGSHELL < "$BG_CACHE"
+  # `read` strips leading and trailing whitespace, and the pid list is matched
+  # as *" $pid "* — so a cached read dropped the boundary spaces and the first
+  # and last pid stopped matching, flipping the dot on alternate frames.
+  (( bg_age >= 0 && bg_age <= 1 )) && { IFS= read -r BGSHELL < "$BG_CACHE"; BGSHELL=" ${BGSHELL# } "; }
 fi
 if [[ -z $BGSHELL ]]; then
   BGSHELL=" $(ps -Ao pid=,ppid=,command= 2>/dev/null | awk '
