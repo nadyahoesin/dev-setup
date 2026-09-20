@@ -120,16 +120,12 @@ activity() {  # indicator for tab $1 in $REPLY_A (visible width 2)
   esac
 }
 
-busy_children() {  # under tab $1: busy workers in $REPLY_B, never-dispatched ones in $REPLY_U
-  local i pid; REPLY_B=0 REPLY_U=0
+busy_children() {  # busy worker count under tab $1 in $REPLY_B
+  local i pid; REPLY_B=0
   for i in "${!W_SESS[@]}"; do
     [[ ${W_PARENT[$i]} == "$1" ]] || continue
     pid=""; [[ -f $STATE/pi/${W_SESS[$i]}/busy ]] && read -r pid < "$STATE/pi/${W_SESS[$i]}/busy"
-    if [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null; then REPLY_B=$((REPLY_B + 1))
-    elif [[ ! -f $STATE/pi/${W_SESS[$i]}/transcript.log ]] &&
-         (( NOW - $(stat -f %m "$STATE/${W_SESS[$i]}.env" 2>/dev/null || echo 0) <= 900 )); then
-      REPLY_U=$((REPLY_U + 1))
-    fi
+    [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && REPLY_B=$((REPLY_B + 1))
   done
 }
 # Tabs whose worker list is collapsed (toggled by clicking ▾/▸).
@@ -166,15 +162,6 @@ children() {  # print child rows for tab $1 (group $2, index $3); $4=1 hides the
     busy=""
     pid=""; [[ -f $STATE/pi/$sess/busy ]] && read -r pid < "$STATE/pi/$sess/busy"
     [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && busy="${YEL}●${RST}"
-    # A worker with no transcript was acquired but never dispatched to — a brief
-    # the script rejected, say. It would otherwise look exactly like a finished
-    # one and fold away, which makes a failed dispatch silent. Shown only while
-    # it is fresh: after that it is an abandoned worktree for `$S sweep` to
-    # collect, not news, and a session that keeps failing would otherwise pile
-    # up a row per attempt for good.
-    if [[ -z $busy && ! -f $STATE/pi/$sess/transcript.log ]]; then
-      (( NOW - $(stat -f %m "$STATE/$sess.env" 2>/dev/null || echo 0) <= 900 )) && busy="${DIM}○${RST}"
-    fi
     # a worker that finished is folded away; the one you are looking at stays
     [[ -z $busy && $sess != "$CUR" && $CUR != "pisub-$sess--"* ]] && continue
     # nested `pi -p` runs this worker started (recorded by the skill's shim/pi)
@@ -320,7 +307,7 @@ while IFS=$'\t' read -r id idx active act path name; do
     # a fold glyph only where there is something to fold: workers still running
     # (or the one being viewed). Once they are all finished the tab shows
     # nothing at all — no glyph, no count — until one gets another turn.
-    if (( REPLY_B > 0 || REPLY_U > 0 || VIEWING )); then (( collapsed )) && fold="▸" || fold="▾"; fi
+    if (( REPLY_B > 0 || VIEWING )); then (( collapsed )) && fold="▸" || fold="▾"; fi
   fi
   activity "$id"
   # the ⋯ spinner glyph is now shown as the activity dot instead
@@ -331,7 +318,7 @@ while IFS=$'\t' read -r id idx active act path name; do
     # tab again, and its workers reappear by themselves if one is given a turn
     if (( REPLY_B > 0 )); then tail="$tail ${YEL}⋯${REPLY_B}${RST}"; tw=$((tw + 2 + ${#REPLY_B})); fi
   fi
-  room; fit "$name" $(( REPLY_ROOM - 4 - tw - 2 )); name=$REPLY_F   # -2: the ✕ column
+  room; fit "$name" $(( REPLY_ROOM - 4 - tw - 3 )); name=$REPLY_F   # -3: the ✕ column and a gap before it
   nc=$CC; case "$KIND" in *" $id=pi "*) nc=$PI ;; esac
   # no activity dot but unseen output: a dim dot in the same column
   [[ $REPLY_A == "  " && $act == 1 ]] && REPLY_A="${DIM}•${RST} "
