@@ -76,11 +76,12 @@ NRST=$'\e[22;39m'
 # one thing in it that cannot change between two consecutive frames in a way
 # anyone would notice — so it is cached for a second. Redrawing on a tab switch
 # is what has to feel instant.
+NOW=$(date +%s)   # bash 3.2 has no EPOCHSECONDS
 BG_CACHE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.bgshell"
 BGSHELL=""
 if [[ -f $BG_CACHE ]]; then
-  bg_age=$(( EPOCHSECONDS - $(stat -f %m "$BG_CACHE" 2>/dev/null || echo 0) ))
-  (( bg_age <= 1 )) && read -r BGSHELL < "$BG_CACHE"
+  bg_age=$(( NOW - $(stat -f %m "$BG_CACHE" 2>/dev/null || echo 0) ))
+  (( bg_age >= 0 && bg_age <= 1 )) && read -r BGSHELL < "$BG_CACHE"
 fi
 if [[ -z $BGSHELL ]]; then
   BGSHELL=" $(ps -Ao pid=,ppid=,command= 2>/dev/null | awk '
@@ -125,7 +126,10 @@ busy_children() {  # under tab $1: busy workers in $REPLY_B, never-dispatched on
     [[ ${W_PARENT[$i]} == "$1" ]] || continue
     pid=""; [[ -f $STATE/pi/${W_SESS[$i]}/busy ]] && read -r pid < "$STATE/pi/${W_SESS[$i]}/busy"
     if [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null; then REPLY_B=$((REPLY_B + 1))
-    elif [[ ! -f $STATE/pi/${W_SESS[$i]}/transcript.log ]]; then REPLY_U=$((REPLY_U + 1)); fi
+    elif [[ ! -f $STATE/pi/${W_SESS[$i]}/transcript.log ]] &&
+         (( NOW - $(stat -f %m "$STATE/${W_SESS[$i]}.env" 2>/dev/null || echo 0) <= 900 )); then
+      REPLY_U=$((REPLY_U + 1))
+    fi
   done
 }
 # Tabs whose worker list is collapsed (toggled by clicking ▾/▸).
@@ -164,8 +168,13 @@ children() {  # print child rows for tab $1 (group $2, index $3); $4=1 hides the
     [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && busy="${YEL}●${RST}"
     # A worker with no transcript was acquired but never dispatched to — a brief
     # the script rejected, say. It would otherwise look exactly like a finished
-    # one and fold away, which makes a failed dispatch silent.
-    [[ -z $busy && ! -f $STATE/pi/$sess/transcript.log ]] && busy="${DIM}○${RST}"
+    # one and fold away, which makes a failed dispatch silent. Shown only while
+    # it is fresh: after that it is an abandoned worktree for `$S sweep` to
+    # collect, not news, and a session that keeps failing would otherwise pile
+    # up a row per attempt for good.
+    if [[ -z $busy && ! -f $STATE/pi/$sess/transcript.log ]]; then
+      (( NOW - $(stat -f %m "$STATE/$sess.env" 2>/dev/null || echo 0) <= 900 )) && busy="${DIM}○${RST}"
+    fi
     # a worker that finished is folded away; the one you are looking at stays
     [[ -z $busy && $sess != "$CUR" && $CUR != "pisub-$sess--"* ]] && continue
     # nested `pi -p` runs this worker started (recorded by the skill's shim/pi)
