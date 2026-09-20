@@ -34,19 +34,16 @@ case "$want" in
     # one would then keep the yellow dot its own PreToolUse just set.
     blocking=""
     case "$json" in *'"tool_name":"AskUserQuestion"'*|*'"tool_name":"ExitPlanMode"'*) blocking=1 ;; esac
-    if [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_turn}')" != 1 ]; then
-      # No turn open, yet a tool is running. Either a PostToolUse straggler from
-      # the turn that just ended (they land right after the synchronous Stop),
-      # or a turn whose UserPromptSubmit we never saw — a session resumed from
-      # the command line, say — which would otherwise sit "idle" for its whole
-      # run. Anything but the first seconds after Stop is taken as a live turn.
-      if [ "$want" = working ]; then
-        at=$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_idle_at}'); at=${at:-0}
-        since=$(( $(date +%s) - at ))
-        [ "$since" -le 10 ] 2>/dev/null && exit 0
-      fi
-      turn=1
-    fi
+    # No turn open means no foreground turn is running: a tool event here
+    # belongs to a background agent, which does not stop you typing, or is a
+    # straggler from the turn that just ended. Neither is "working".
+    #
+    # This used to take a late event as a turn whose UserPromptSubmit we had
+    # missed, to catch a session started from the command line. It caught
+    # background agents instead and left tabs yellow for hours while their
+    # prompt sat empty — a worse error, because an idle-looking tab you cannot
+    # trust is the whole reason this file exists.
+    [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_turn}')" = 1 ] || exit 0
     if [ "$want" = pre ] && [ -n "$blocking" ]; then want=waiting
     else
       # A question or permission prompt sits *inside* an open turn, and a late
