@@ -46,11 +46,17 @@ refresh() {  # only bother fzf when the rows actually changed
 SETTLE="${TMPDIR:-/tmp}/tmux-sidebar-$UID.settle"
 
 touch "$DIRTY"
-# a lock left behind by a killed run must not wedge the sidebar forever
-if [ -d "$LOCK" ]; then
-  age=$(( EPOCHSECONDS - $(stat -f %m "$LOCK" || echo "$EPOCHSECONDS") ))   # fallback if it vanished under us
-  [ "$age" -gt 5 ] && rmdir "$LOCK" 2>/dev/null
-fi
+# A lock or settle marker left behind by a killed run must not wedge the
+# sidebar forever: nothing else ever removes them, so the cursor would stop
+# following the active tab until the next reboot. `date +%s`, not
+# EPOCHSECONDS — /usr/bin/env bash here is macOS's 3.2, where that variable
+# does not exist and the arithmetic silently yields a huge negative age.
+now=$(date +%s)
+for d in "$LOCK" "$SETTLE"; do
+  [ -d "$d" ] || continue
+  age=$(( now - $(stat -f %m "$d" 2>/dev/null || echo "$now") ))   # fallback if it vanished under us
+  [ "$age" -gt 5 ] && rmdir "$d" 2>/dev/null
+done
 while :; do
   mkdir "$LOCK" 2>/dev/null || exit 0        # someone else is refreshing; they'll see the flag
   # tmux applies automatic-rename on a short timer; one deferred pass catches
