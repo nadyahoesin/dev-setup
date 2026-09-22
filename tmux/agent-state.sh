@@ -70,11 +70,13 @@ case "$want" in
     fi
     if [ "$want" = pre ] && [ -n "$blocking" ]; then want=waiting
     else
-      # A question or permission prompt sits *inside* an open turn, and a late
-      # PostToolUse — a backgrounded agent's, say — would otherwise paint the
-      # tab yellow again while it is still waiting on you. Only a tool actually
-      # starting, or the blocking tool itself finishing, means work resumed.
-      if [ "$want" = working ] && [ -z "$blocking" ] &&
+      # A question or permission prompt sits *inside* an open turn: the main
+      # loop is stopped dead until you answer, so while the pane is waiting,
+      # *no* tool event of any kind can be the main loop's — a background
+      # agent the turn left running is the only thing that can still call
+      # tools. Ignore them all; only the blocking tool's own PostToolUse means
+      # you answered and work resumed.
+      if [ -z "$blocking" ] &&
          [ "$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_state}')" = waiting ]; then exit 0; fi
       want=working
     fi ;;
