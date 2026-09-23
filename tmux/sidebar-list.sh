@@ -113,7 +113,18 @@ while IFS='|' read -r wid st cmd ppid kind bg bgat; do   # '|' not tab: tabs are
     # agent is still *doing* something: agent-state.sh stamps @agent_bg_at on
     # every tool event it drops as a straggler, which is exactly what a live
     # background agent produces. Ten minutes silent and the tab goes grey again.
-    [[ $bg =~ ^[0-9]+$ && $bgat =~ ^[0-9]+$ ]] && (( bg > 0 && NOW - bgat <= 600 )) && st=working
+    if [[ $bgat =~ ^[0-9]+$ ]]; then
+      age=$(( NOW - bgat ))
+      [[ $bg =~ ^[0-9]+$ ]] && (( bg > 0 && age <= 600 )) && st=working
+      # Heartbeat alone, on a much shorter fuse. SubagentStart/SubagentStop are
+      # read from settings.json at startup, so a session that was already open
+      # when they were added never increments the count — which is every session
+      # running at the time, exactly when you most want the tab to be honest.
+      # A stamp this fresh can only be a background agent still calling tools; a
+      # true straggler after a finished turn is one or two events, so it costs at
+      # most a minute of yellow instead of the count's ten.
+      (( age <= 60 )) && st=working
+    fi
   fi
   case "$st" in
     waiting) a=3 ;;
