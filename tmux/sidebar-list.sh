@@ -69,6 +69,12 @@ KIND=" "
 CC=$'\e[1;97m'                 # Claude Code: bold white
 PI=$'\e[1;38;2;226;210;255m'   # pi: bold pale violet
 NRST=$'\e[22;39m'
+# `(^|/)claude$`, not `/claude$`: `ps -o command=` prints the launcher's argv[0],
+# which for a PATH-resolved launch is the bare word `claude` with no directory at
+# all. The old pattern required a slash, so it matched nothing, `parent` stayed
+# empty and this whole upgrade was dead — a tab with a background shell still
+# running read as idle for as long as the shell ran. (Measured: 0 processes
+# matched, 11 with the fix.)
 # Pane shells whose Claude Code still has a shell running after its turn ended —
 # typically a run_in_background `agent-session.sh wait` on subagents. Claude runs
 # every Bash call as `zsh -c source …/.claude/shell-snapshots/…` under its own pid.
@@ -88,18 +94,27 @@ if [[ -f $BG_CACHE ]]; then
 fi
 if [[ -z $BGSHELL ]]; then
   BGSHELL=" $(ps -Ao pid=,ppid=,command= 2>/dev/null | awk '
-    $3 ~ /\/claude$/ || $3 ~ /\/\.local\/bin\/claude/ { parent[$1] = $2 }
+    $3 ~ /(^|\/)claude$/ { parent[$1] = $2 }
     /\.claude\/shell-snapshots\// { busy[$2] = 1 }
     END { for (c in busy) if (c in parent) printf "%s ", parent[c] }') "
   printf '%s\n' "$BGSHELL" > "$BG_CACHE.tmp" && mv -f "$BG_CACHE.tmp" "$BG_CACHE"
 fi
-while IFS='|' read -r wid st cmd ppid kind; do   # '|' not tab: tabs are IFS whitespace and an empty @agent_state would collapse
+while IFS='|' read -r wid st cmd ppid kind bg bgat; do   # '|' not tab: tabs are IFS whitespace and an empty @agent_state would collapse
   [[ -n $kind ]] && case "$KIND" in *" $wid="*) ;; *) KIND="$KIND$wid=$kind " ;; esac
   a=""
   # A turn that ends while a backgrounded Bash call is still running leaves the
   # agent genuinely working, so "idle" is upgraded here too — not just the empty
   # state. Otherwise a long sweep looks like nobody is doing anything.
-  [[ ( -z $st || $st == idle ) && $BGSHELL == *" $ppid "* ]] && st=working
+  if [[ -z $st || $st == idle ]]; then
+    [[ $BGSHELL == *" $ppid "* ]] && st=working
+    # In-process background subagents leave no child process at all, so they are
+    # counted by the SubagentStart/SubagentStop hooks instead. The count alone
+    # would stick if an agent died without its Stop, so it only counts while the
+    # agent is still *doing* something: agent-state.sh stamps @agent_bg_at on
+    # every tool event it drops as a straggler, which is exactly what a live
+    # background agent produces. Ten minutes silent and the tab goes grey again.
+    [[ $bg =~ ^[0-9]+$ && $bgat =~ ^[0-9]+$ ]] && (( bg > 0 && NOW - bgat <= 600 )) && st=working
+  fi
   case "$st" in
     waiting) a=3 ;;
     working) a=2 ;;
@@ -112,7 +127,7 @@ while IFS='|' read -r wid st cmd ppid kind; do   # '|' not tab: tabs are IFS whi
   [[ -z $a ]] && continue
   case "$ACT" in *" $wid="*) prev=${ACT#*" $wid="}; prev=${prev%% *}; (( a <= prev )) && continue; ACT=${ACT/" $wid=$prev "/ } ;; esac
   ACT="$ACT$wid=$a "
-done < <(tmux list-panes -s -t main -F '#{window_id}|#{@agent_state}|#{pane_current_command}|#{pane_pid}|#{@agent_kind}' 2>/dev/null)
+done < <(tmux list-panes -s -t main -F '#{window_id}|#{@agent_state}|#{pane_current_command}|#{pane_pid}|#{@agent_kind}|#{@agent_bg}|#{@agent_bg_at}' 2>/dev/null)
 
 activity() {  # indicator for tab $1 in $REPLY_A (visible width 2)
   local v=""

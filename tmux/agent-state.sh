@@ -36,7 +36,27 @@ remember() {
   return 0
 }
 case "$want" in
-  prompt) want=working turn=1; remember ;;   # UserPromptSubmit
+  prompt) want=working turn=1; remember
+    # A new turn is a clean slate: any background agent still counted here died
+    # without its SubagentStop, and must not keep the tab yellow.
+    TMUX= $T set -p -u -t "$TMUX_PANE" @agent_bg ;;
+  bgstart|bgstop)
+    # A background subagent (Explore, Task, ...) runs *inside* the Claude
+    # process: there is no child process, so the shell scan in sidebar-list.sh
+    # cannot see it, and its tool events carry the prompt_id of the turn that
+    # spawned it — by then already seen, so they read as stragglers and are
+    # dropped. A turn that ends while agents are still running therefore went
+    # grey and stayed grey, with the pane itself saying "Waiting for N
+    # background agents to finish". SubagentStart/SubagentStop are the only
+    # events that bound a subagent's life, so count them.
+    n=$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_bg}')
+    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    if [ "$want" = bgstart ]; then n=$((n + 1)); else n=$((n - 1)); fi
+    [ "$n" -lt 0 ] && n=0
+    TMUX= $T set -p -t "$TMUX_PANE" @agent_bg "$n"
+    TMUX= $T set -p -t "$TMUX_PANE" @agent_bg_at "$(date +%s)"
+    "$HOME/.config/tmux/sidebar-refresh.sh" >/dev/null 2>&1 &
+    exit 0 ;;
   idle)   # Stop, and SessionStart — said explicitly, so the sidebar shows a grey dot.
     # Except a compaction: it fires SessionStart in the middle of the very turn
     # it is compacting, and closing the turn there strands the tab grey for the
@@ -63,7 +83,11 @@ case "$want" in
       # as when a session is started with a prompt on the command line. The
       # id says which: one we have seen is old work, one we have not is a
       # live turn nobody told us about.
-      seen && exit 0
+      # Dropped as old work — but a *live* background agent's tool calls look
+      # exactly like this, so use them as its heartbeat. Paired with the
+      # @agent_bg count (which alone can drift if an agent dies without its
+      # SubagentStop), this is what lets the working state decay by itself.
+      if seen; then TMUX= $T set -p -t "$TMUX_PANE" @agent_bg_at "$(date +%s)"; exit 0; fi
       [ -n "$pid" ] || exit 0          # no id to judge by: assume old work
       remember
       turn=1
