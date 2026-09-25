@@ -59,6 +59,23 @@ while IFS=$'\t' read -r sess; do
 done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -E '^(pi|codex)-wt-')
 CUR=$(tmux list-clients -F '#{client_session}' 2>/dev/null | head -1)
 
+# A pi turn that is "busy" may only be queued behind the concurrency gate in the
+# skill's pi-turn.sh, waiting for a slot rather than running. Showing it with the
+# same yellow dot as a running one made a fan-out of 20 read as 20 things
+# working. The gate leaves the tell for free: a running turn holds a slot, whose
+# pid file names it, and a queued one holds none. Read the holders once per
+# render. `ungated` is pi-turn.sh's marker for a turn run with the gate off,
+# which runs without a slot and must not read as queued.
+SLOTS="${TMPDIR:-/tmp}/pi-turn-slots-$UID"
+HOLDERS=" "
+for f in "$SLOTS"/*/pid; do [[ -f $f ]] && HOLDERS+="$(<"$f") "; done
+wstate() {  # pi worker $1 → REPLY_W: run / queued / "" (idle)
+  local pid=""; REPLY_W=""
+  [[ -f $STATE/pi/$1/busy ]] && read -r pid < "$STATE/pi/$1/busy"
+  [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null || return 0
+  if [[ $HOLDERS == *" $pid "* || -f $STATE/pi/$1/ungated ]]; then REPLY_W=run; else REPLY_W=queued; fi
+}
+
 # activity per tab: waiting (agent needs you) > working (agent mid-turn) >
 # running (a non-shell command in a plain terminal pane)
 GRN=$'\e[32m' YEL=$'\e[33m' RED=$'\e[31m'
@@ -152,12 +169,13 @@ activity() {  # indicator for tab $1 in $REPLY_A (visible width 2)
   esac
 }
 
-busy_children() {  # busy worker count under tab $1 in $REPLY_B
-  local i pid; REPLY_B=0
+busy_children() {  # workers under tab $1 with a turn: $REPLY_B in all, $REPLY_Q of them queued
+  local i; REPLY_B=0 REPLY_Q=0
   for i in "${!W_SESS[@]}"; do
     [[ ${W_PARENT[$i]} == "$1" ]] || continue
-    pid=""; [[ -f $STATE/pi/${W_SESS[$i]}/busy ]] && read -r pid < "$STATE/pi/${W_SESS[$i]}/busy"
-    [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && REPLY_B=$((REPLY_B + 1))
+    wstate "${W_SESS[$i]}"
+    [[ -n $REPLY_W ]] && REPLY_B=$((REPLY_B + 1))
+    [[ $REPLY_W == queued ]] && REPLY_Q=$((REPLY_Q + 1))
   done
 }
 # Tabs whose worker list is collapsed (toggled by clicking ▾/▸).
@@ -191,9 +209,8 @@ children() {  # print child rows for tab $1 (group $2, index $3); $4=1 hides the
     [[ ${W_PARENT[$i]} == "$want" ]] || continue
     sess=${W_SESS[$i]}
     m=" "; [[ $sess == "$CUR" ]] && m="▶"
-    busy=""
-    pid=""; [[ -f $STATE/pi/$sess/busy ]] && read -r pid < "$STATE/pi/$sess/busy"
-    [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && busy="${YEL}●${RST}"
+    busy=""; wstate "$sess"
+    case $REPLY_W in run) busy="${YEL}●${RST}" ;; queued) busy="${DIM}◌${RST}" ;; esac
     # a worker that finished is folded away; the one you are looking at stays
     [[ -z $busy && $sess != "$CUR" && $CUR != "pisub-$sess--"* ]] && continue
     # nested `pi -p` runs this worker started (recorded by the skill's shim/pi)
@@ -348,7 +365,11 @@ while IFS=$'\t' read -r id idx active act path name; do
   if (( REPLY_N > 0 )); then
     # nothing marks a finished worker: a tab with none running reads as a plain
     # tab again, and its workers reappear by themselves if one is given a turn
-    if (( REPLY_B > 0 )); then tail="$tail ${YEL}⋯${REPLY_B}${RST}"; tw=$((tw + 2 + ${#REPLY_B})); fi
+    # running and queued counted apart: ⋯ for turns holding a slot, a dim ◌ for
+    # the ones still waiting for one
+    r=$(( REPLY_B - REPLY_Q ))
+    if (( r > 0 )); then tail="$tail ${YEL}⋯${r}${RST}"; tw=$((tw + 2 + ${#r})); fi
+    if (( REPLY_Q > 0 )); then tail="$tail ${DIM}◌${REPLY_Q}${RST}"; tw=$((tw + 2 + ${#REPLY_Q})); fi
   fi
   room; fit "$name" $(( REPLY_ROOM - 4 - tw - 3 )); name=$REPLY_F   # -3: the ✕ column and a gap before it
   nc=$CC; case "$KIND" in *" $id=pi "*) nc=$PI ;; esac
