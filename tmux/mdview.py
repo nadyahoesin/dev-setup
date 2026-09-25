@@ -1,8 +1,14 @@
 #!/usr/bin/env -S uv run --quiet --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["textual>=3,<4"]
+# dependencies = ["textual>=3,<4", "rich<14.2"]
 # ///
+# rich<14.2: rich 14.2 started serialising Style.meta with pickle, and Textual 3
+# still decodes it with marshal.loads. Any line carrying meta (a link, a click
+# action) then raises "bad marshal data" as it scrolls into view; the fatal-error
+# handler trips on the same meta while pretty-printing locals, so the app never
+# exits — the screen-update timer is simply dead. The pane looks frozen (keys
+# and scrolling change nothing) though a resize still repaints it.
 """Quiet file viewer for the tmux sidebar.
 
 One pane, never split: the files you open become tabs along the top and one is
