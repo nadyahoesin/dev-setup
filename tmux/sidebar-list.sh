@@ -203,7 +203,7 @@ EXPANDED=" "; [[ -f $EXPANDED_FILE ]] && EXPANDED=" $(<"$EXPANDED_FILE") "
 EXPANDED=${EXPANDED//$'\n'/ }
 
 children() {  # print child rows for tab $1 (group $2, index $3); $4=1 hides them all
-  local want=$1 i sess m busy label pid sub d nsub bsub fold tail view open collapsed=${4:-0}
+  local want=$1 i sess m busy label pid sub d bsub fold tail view open collapsed=${4:-0}
   (( collapsed )) && return 0
   for i in "${!W_SESS[@]}"; do
     [[ ${W_PARENT[$i]} == "$want" ]] || continue
@@ -214,18 +214,19 @@ children() {  # print child rows for tab $1 (group $2, index $3); $4=1 hides the
     # a worker that finished is folded away; the one you are looking at stays
     [[ -z $busy && $sess != "$CUR" && $CUR != "pisub-$sess--"* ]] && continue
     # nested `pi -p` runs this worker started (recorded by the skill's shim/pi)
-    sub=$STATE/pi/$sess/sub nsub=0 bsub=0 fold="" tail="" open=0
+    # — and, like the workers themselves, only the ones still running: a run
+    # that finished folds away. A judging script that shells out once per case
+    # leaves hundreds behind, and a "(+141)" of finished runs said nothing but
+    # "this worker is busy". The one you are looking at stays.
+    sub=$STATE/pi/$sess/sub bsub=0 fold="" tail="" open=0 view="pisub-$sess--"
     for d in "$sub"/*/; do
       [[ -f ${d}label ]] || continue
-      nsub=$((nsub + 1)); pid=""
-      [[ -f ${d}pid ]] && read -r pid < "${d}pid"
+      pid=""; [[ -f ${d}pid ]] && read -r pid < "${d}pid"
       [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null && bsub=$((bsub + 1))
     done
-    if (( nsub > 0 )); then
-      view="pisub-$sess--"
+    if (( bsub > 0 )) || [[ $CUR == "$view"* ]]; then
       if [[ $EXPANDED == *" $sess "* || $CUR == "$view"* ]]; then fold="▾ " open=1; else fold="▸ "; fi
-      tail=" ${DIM}(+$nsub)${RST}"
-      (( bsub > 0 )) && tail="$tail ${YEL}⋯$bsub${RST}"
+      (( bsub > 0 )) && tail=" ${YEL}⋯$bsub${RST}"
       (( open == 0 )) && [[ $CUR == "$view"* ]] && m="▶"
     fi
     room; vis "$tail"
@@ -240,6 +241,7 @@ children() {  # print child rows for tab $1 (group $2, index $3); $4=1 hides the
       busy=""; pid=""
       [[ -f ${d}pid ]] && read -r pid < "${d}pid"
       if [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null; then busy="${YEL}●${RST}"
+      elif [[ $m != "▶" ]]; then continue   # finished: folded away
       elif [[ -f ${d}exit && $(<"${d}exit") != 0 ]]; then busy="${RED}✗${RST}"; fi
       read -r label < "${d}label"; room; fit "$label" $(( REPLY_ROOM - 10 )); label=$REPLY_F
       cm=""; [[ $m == "▶" ]] && cm=$'\t▶'
