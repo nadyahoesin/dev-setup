@@ -57,6 +57,17 @@ case "$want" in
     TMUX= $T set -p -t "$TMUX_PANE" @agent_bg_at "$(date +%s)"
     "$HOME/.config/tmux/sidebar-refresh.sh" >/dev/null 2>&1 &
     exit 0 ;;
+  compact)   # PreCompact
+    # A compaction you ask for (/compact) is not a turn: no UserPromptSubmit
+    # opens one, so the tab sat grey through minutes of "Compacting
+    # conversation…". Open one here. An automatic compaction happens inside a
+    # turn that is already open, and this is a no-op for it.
+    want=working turn=1 ;;
+  compacted)   # PostCompact
+    # …and close it again when a manual one is done. An automatic one hands
+    # back to the turn it interrupted, which is still working.
+    [ "$(printf '%s' "$json" | jq -r '.trigger // ""')" = manual ] || exit 0
+    want=idle turn=0 ;;
   idle)   # Stop, and SessionStart — said explicitly, so the sidebar shows a grey dot.
     # Except a compaction: it fires SessionStart in the middle of the very turn
     # it is compacting, and closing the turn there strands the tab grey for the
