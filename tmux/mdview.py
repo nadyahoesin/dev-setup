@@ -25,6 +25,8 @@ g/G top/bottom · r reload
 """
 import os
 import re
+import shutil
+import subprocess
 import sys
 import webbrowser
 from pathlib import Path
@@ -45,6 +47,31 @@ _parse_mouse = _xterm_parser.XTermParser.parse_mouse_code
 _HWHEEL = re.compile(r"\x1b\[<(\d+);")
 
 MD_SUFFIXES = (".md", ".markdown", ".mdown", ".mkd")
+# Word-processor documents are zip or binary containers: read as text they are
+# a screen of mojibake, and pygments chewing a binary blob is what hung the
+# pane. Convert them instead — pandoc to markdown when it is installed (the
+# headings and lists survive), macOS textutil to plain text otherwise.
+DOC_SUFFIXES = (".docx", ".doc", ".odt", ".rtf")
+
+
+def doc_to_text(path: Path) -> tuple[str, bool]:
+    """(text, is_markdown) for a word-processor document."""
+    if shutil.which("pandoc") and path.suffix.lower() != ".doc":
+        cmd = ["pandoc", "--to", "gfm", "--wrap", "none", str(path)]
+        md = True
+    else:
+        cmd = ["textutil", "-convert", "txt", "-stdout", str(path)]
+        md = False
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if out.returncode != 0:
+        raise OSError(out.stderr.strip() or f"{cmd[0]} exited {out.returncode}")
+    return out.stdout, md
+
+
+def is_binary(path: Path) -> bool:
+    """A NUL in the first 8 KB: not text, whatever its name says."""
+    with path.open("rb") as f:
+        return b"\0" in f.read(8192)
 
 
 def _parse_mouse_hwheel(self, code: str):
@@ -257,7 +284,10 @@ class MdView(App):
         switcher = self.query_one("#body", ContentSwitcher)
         pid = f"p-{tid}"
         if pid not in self.kinds:
-            markdown = path.suffix.lower() in MD_SUFFIXES
+            suffix = path.suffix.lower()
+            markdown = suffix in MD_SUFFIXES or (
+                suffix in DOC_SUFFIXES and suffix != ".doc" and shutil.which("pandoc") is not None
+            )
             self.kinds[pid] = "md" if markdown else "plain"
             if markdown:
                 pane = VerticalScroll(Markdown(open_links=False), id=pid)
@@ -273,10 +303,18 @@ class MdView(App):
 
     async def load(self, path: Path, pid: str) -> None:
         message = ""
+        lexer = None
         try:
             self.mtimes[path] = path.stat().st_mtime
-            text = path.read_text(errors="replace")
-        except OSError as e:
+            if path.suffix.lower() in DOC_SUFFIXES:
+                text, _ = doc_to_text(path)
+                lexer = "text"
+            elif is_binary(path):
+                text = None
+                message = f"{path.name} is a binary file — not shown."
+            else:
+                text = path.read_text(errors="replace")
+        except (OSError, subprocess.SubprocessError) as e:
             text = None
             message = f"Cannot read {path}: {e}"
         pane = self.query_one(f"#{pid}")
@@ -292,7 +330,7 @@ class MdView(App):
         static.update(
             Syntax(
                 text,
-                Syntax.guess_lexer(str(path), code=text),
+                lexer or Syntax.guess_lexer(str(path), code=text),
                 theme="native",
                 line_numbers=True,
                 word_wrap=True,
