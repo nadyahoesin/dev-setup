@@ -3,3 +3,7 @@
 .remote-agent-state.json
 .build/
 ios/build/
+__pycache__/
+*.pyc
+.pi/
+.artifacts/

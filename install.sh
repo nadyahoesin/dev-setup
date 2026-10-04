@@ -22,7 +22,7 @@ if [ "$what" = all ] || [ "$what" = terminal ]; then
 
   say "tmux"
   link "$REPO/tmux/tmux.conf" "$HOME/.tmux.conf"
-  for f in ui.conf ghostty-ui.sh sidebar.sh sidebar-list.sh sidebar-refresh.sh sidebar-click.sh sidebar-pos.sh sidebar-nav.sh sidebar-redraw.sh sidebar-poll.sh sidebar-style.sh sidebar-view.sh sidebar-scrolld.py sidebar-resync.sh cc-agent-open.pl cc-agent-view.sh agent-state.sh open-url.sh md-view.sh keys-help.sh md-sidebar.sh mdview.py md-click.sh md-click-parse.py glow-sidebar.json copy-release.sh agent-notify.sh selftest.sh clicktest.py; do
+  for f in ui.conf ghostty-ui.sh sidebar.sh sidebar-list.sh sidebar-refresh.sh sidebar-click.sh sidebar-pos.sh sidebar-nav.sh sidebar-redraw.sh sidebar-poll.sh sidebar-style.sh sidebar-view.sh sidebar-scrolld.py sidebar-resync.sh cc-agent-open.pl cc-agent-view.sh cc-click-test.sh agent-state.sh open-url.sh md-view.sh keys-help.sh md-sidebar.sh mdview.py md-click.sh md-click-parse.py glow-sidebar.json copy-release.sh agent-notify.sh selftest.sh clicktest.py; do
     link "$REPO/tmux/$f" "$HOME/.config/tmux/$f"
   done
 
@@ -43,7 +43,7 @@ EOF
   say "Agent Notifier.app"
   "$REPO/agent-notifier/build.sh"
 
-  say "Claude Code hooks (Stop / Notification → notifier; Bash → search guard)"
+  say "Claude Code hooks (notifier, sidebar activity + subagent registry, search guard)"
   link "$REPO/claude/guard-search.sh" "$HOME/.config/claude/guard-search.sh"
   S="$HOME/.claude/settings.json"; mkdir -p "$HOME/.claude"; [ -f "$S" ] || echo '{}' > "$S"
   jq --slurpfile h "$REPO/claude/hooks.json" '
@@ -79,7 +79,7 @@ if [ "$what" = all ] || [ "$what" = pi ]; then
   say "pi coding agent"
   command -v pi >/dev/null 2>&1 || npm install -g @earendil-works/pi-coding-agent
   mkdir -p "$HOME/.pi/agent/extensions"
-  # settings/mcp are copied (pi rewrites them); extension is linked
+  # settings/mcp/models/subagents are copied or merged (pi rewrites them); extensions and the agent type are linked
   for f in settings.json mcp.json models.json; do
     if [ -f "$HOME/.pi/agent/$f" ]; then
       jq -s '.[0] * .[1]' "$HOME/.pi/agent/$f" "$REPO/pi/$f" > "$HOME/.pi/agent/$f.tmp" && mv "$HOME/.pi/agent/$f.tmp" "$HOME/.pi/agent/$f"

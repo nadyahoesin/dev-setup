@@ -127,15 +127,23 @@ PANES=$(tmux list-panes -s -t main -F '#{window_id}|#{@agent_state}|#{pane_curre
 LIVE=" "   # panes whose footer offers "esc to interrupt": a turn is really running
 args=()
 while IFS='|' read -r wid st cmd ppid kind bg bgat pane pw; do
-  [[ $st == working && $kind == claude && $pw =~ ^[0-9]+$ ]] && (( pw >= 90 )) || continue
+  [[ $kind == claude && $st != waiting && $pw =~ ^[0-9]+$ ]] && (( pw >= 90 )) || continue
   (( ${#args[@]} )) && args+=(';')
   args+=(display-message -p "@@${pane#%}" ';' capture-pane -p -t "$pane")   # no % in the marker: display-message would expand it
 done <<< "$PANES"
 if (( ${#args[@]} )); then
-  cur=""
+  # Only the footer counts: the line under the rule that closes the prompt box
+  # (the agent list, when there is one, comes after it). The words can sit in
+  # the conversation above just as well.
+  cur="" foot="" rule=""
   while IFS= read -r line; do
-    case "$line" in @@[0-9]*) cur="%${line#@@}" ;; *"esc to interrupt"*) [[ -n $cur ]] && LIVE+="$cur " ;; esac
+    case "$line" in
+      @@[0-9]*) [[ -n $cur && $foot == *"esc to interrupt"* ]] && LIVE+="$cur "; cur="%${line#@@}" foot="" rule="" ;;
+      ─*) rule=1 ;;
+      *[![:space:]]*) [[ -n $rule ]] && foot=$line; rule="" ;;
+    esac
   done < <(tmux "${args[@]}" 2>/dev/null)
+  [[ -n $cur && $foot == *"esc to interrupt"* ]] && LIVE+="$cur "
 fi
 while IFS='|' read -r wid st cmd ppid kind bg bgat pane pw; do   # '|' not tab: tabs are IFS whitespace and an empty @agent_state would collapse
   [[ -n $kind ]] && case "$KIND" in *" $wid="*) ;; *) KIND="$KIND$wid=$kind " ;; esac
@@ -145,8 +153,12 @@ while IFS='|' read -r wid st cmd ppid kind bg bgat pane pw; do   # '|' not tab: 
   # stayed yellow until the next prompt. The footer is the only witness: a turn
   # that is really running always offers "esc to interrupt". Read-only, so a
   # misread costs one frame; skipped on panes too narrow to show the hint whole.
-  if [[ $st == working && $kind == claude && $pw =~ ^[0-9]+$ ]] && (( pw >= 90 )); then
-    [[ $LIVE == *" $pane "* ]] || st=idle
+  # It is the witness the other way too: a turn started by a background task
+  # reporting back has no UserPromptSubmit, and its tool events carry the id of
+  # the turn that started the task — one already seen, so they are dropped as
+  # stragglers and the tab sat grey through the whole turn.
+  if [[ $kind == claude && $st != waiting && $pw =~ ^[0-9]+$ ]] && (( pw >= 90 )); then
+    if [[ $LIVE == *" $pane "* ]]; then st=working; elif [[ $st == working ]]; then st=idle; fi
   fi
   # A turn that ends while a backgrounded Bash call is still running leaves the
   # agent genuinely working, so "idle" is upgraded here too — not just the empty

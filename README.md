@@ -260,9 +260,7 @@ pi/                       pi coding agent: settings, models, MCP servers, subage
 infra/remote-pi-relay/    Terraform: a Remote Pi relay on Cloud Run
 bridge/ relay/ protocol/ ios/   Remote Agent — a separate project, see README.remote-agent.md
 scripts/worktree-gc.sh    delete node_modules in worktrees unused for N days
-.agents/skills/           agent skills (.claude/skills is a symlink to this directory, for Claude Code)
-.artifacts/               notes left by the orchestration run that built Remote Agent
-```
+.agents/skills/           agent skills (.claude/skills is a symlink to this directory, for Claude Code)```
 
 ## Tuning
 
@@ -454,13 +452,12 @@ finish in silence.
 ## Testing after a change
 
 ```sh
-~/Workspace/dev-setup/tmux/cc-click-test.sh <pane id> <window id> <agent id | tab | fold:<agent id>>…
+~/.config/tmux/cc-click-test.sh <pane id> <window id> <agent id | tab | fold:<agent id>>…
 ```
 
 `cc-click-test.sh` runs the real click handler on real subagent rows and checks
 what the pane shows, which sidebar row is highlighted, and that the sidebar's
-names match Claude Code's. It needs live subagents in the pane and is run from
-the repo (it is not linked into `~/.config/tmux`).
+names match Claude Code's. It needs live subagents in the pane.
 
 `tmux/selftest.sh` (26 checks; quits and relaunches Ghostty, closes spare empty
 shell tabs) and `tmux/clicktest.py` were written for the first sidebar layout —

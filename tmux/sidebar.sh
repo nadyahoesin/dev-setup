@@ -2,7 +2,8 @@
 # Left-hand tab list for the "main" tmux session, rendered with fzf as a
 # pure display (no input line, no key/mouse handling). Clicks are handled
 # by the outer tmux (ui.conf → sidebar-click.sh); refreshes arrive over the
-# unix socket from tmux hooks (sidebar-refresh.sh). Never polls.
+# unix socket (sidebar-refresh.sh, called by tmux and agent hooks, and every
+# 3 s by sidebar-poll.sh). This script itself never polls.
 set -u
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 unset TMUX   # always address the default ("main") server, not the outer ui one

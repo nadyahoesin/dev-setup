@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Ghostty's `command`. Layout:
 #   ┌────────┬──────────────────────────┐
-#   │ TABS   │  tmux session "main"     │
+#   │ tabs   │  tmux session "main"     │
 #   │ (fzf)  │  (your real shell/agents)│
 #   └────────┴──────────────────────────┘
 # "main" survives Ghostty being closed; "ui" is throwaway chrome.
@@ -15,7 +15,7 @@ SIDEBAR_WIDTH=51
 
 # Chrome session (rebuilt if missing).
 if ! "$TMUX_BIN" -L ui has-session -t ui 2>/dev/null; then
-  # size the detached session to the real terminal so the 26-col split is exact
+  # size the detached session to the real terminal so the sidebar split is exact
   ROWS=0; COLS=0
   for _ in 1 2 3 4 5 6 7 8 9 10; do   # the pty can report 0x0 for a moment at launch
     read -r ROWS COLS < <(stty size 2>/dev/null || echo 0 0)

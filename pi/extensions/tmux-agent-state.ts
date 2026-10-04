@@ -1,14 +1,15 @@
 /**
  * Same sidebar indicator for pi as for Claude Code.
  *
- * Claude Code drives the tmux sidebar through hooks (claude/agent-state.sh),
+ * Claude Code drives the tmux sidebar through hooks (tmux/agent-state.sh),
  * which set the pane option `@agent_state` to working / waiting / idle. pi has
  * no hooks, so this extension does it from the extension events instead. The
- * sidebar then reads one option and cannot tell the two agents apart:
+ * sidebar then reads the same option for both agents (and `@agent_kind`, set
+ * below, to colour the tab name):
  *
  *   working   the agent is mid-turn            (yellow ●)
  *   waiting   it is blocked on you             (red !)
- *   idle      it is sitting at the prompt      (no dot)
+ *   idle      it is sitting at the prompt      (grey •)
  *
  * "idle" is set explicitly rather than unset: a pi pane's running command is
  * `node`, which the sidebar would otherwise read as "some command is running"
