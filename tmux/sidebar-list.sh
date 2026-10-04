@@ -83,8 +83,12 @@ ACT=" "
 # which agent owns a tab: claude / pi (set by the Claude hook and pi's
 # tmux-agent-state extension). Only the name's colour differs.
 KIND=" "
+CCPANES=""   # "<window_id>:<pane number> …" for every Claude Code pane
 CC=$'\e[1;97m'                 # Claude Code: bold white
 PI=$'\e[1;38;2;226;210;255m'   # pi: bold pale violet
+# their children take the parent kind's colour, unbolded: a pi worker and a
+# Claude Code subagent can sit under the same tab
+CCS=$'\e[97m' PIS=$'\e[38;2;226;210;255m' SRST=$'\e[39m'
 NRST=$'\e[22;39m'
 # `(^|/)claude$`, not `/claude$`: `ps -o command=` prints the launcher's argv[0],
 # which for a PATH-resolved launch is the bare word `claude` with no directory at
@@ -116,9 +120,34 @@ if [[ -z $BGSHELL ]]; then
     END { for (c in busy) if (c in parent) printf "%s ", parent[c] }') "
   printf '%s\n' "$BGSHELL" > "$BG_CACHE.tmp" && mv -f "$BG_CACHE.tmp" "$BG_CACHE"
 fi
-while IFS='|' read -r wid st cmd ppid kind bg bgat; do   # '|' not tab: tabs are IFS whitespace and an empty @agent_state would collapse
+# One tmux call for the pane list and one more for every screen we need to look
+# at, rather than one per pane: each is a process, and this runs on every tab
+# switch.
+PANES=$(tmux list-panes -s -t main -F '#{window_id}|#{@agent_state}|#{pane_current_command}|#{pane_pid}|#{@agent_kind}|#{@agent_bg}|#{@agent_bg_at}|#{pane_id}|#{pane_width}' 2>/dev/null)
+LIVE=" "   # panes whose footer offers "esc to interrupt": a turn is really running
+args=()
+while IFS='|' read -r wid st cmd ppid kind bg bgat pane pw; do
+  [[ $st == working && $kind == claude && $pw =~ ^[0-9]+$ ]] && (( pw >= 90 )) || continue
+  (( ${#args[@]} )) && args+=(';')
+  args+=(display-message -p "@@$pane" ';' capture-pane -p -t "$pane")
+done <<< "$PANES"
+if (( ${#args[@]} )); then
+  cur=""
+  while IFS= read -r line; do
+    case "$line" in @@%*) cur=${line#@@} ;; *"esc to interrupt"*) [[ -n $cur ]] && LIVE+="$cur " ;; esac
+  done < <(tmux "${args[@]}" 2>/dev/null)
+fi
+while IFS='|' read -r wid st cmd ppid kind bg bgat pane pw; do   # '|' not tab: tabs are IFS whitespace and an empty @agent_state would collapse
   [[ -n $kind ]] && case "$KIND" in *" $wid="*) ;; *) KIND="$KIND$wid=$kind " ;; esac
+  [[ $kind == claude ]] && CCPANES="$CCPANES$wid:${pane#%} "
   a=""
+  # Esc fires no hook at all, so an interrupted turn is never closed and the tab
+  # stayed yellow until the next prompt. The footer is the only witness: a turn
+  # that is really running always offers "esc to interrupt". Read-only, so a
+  # misread costs one frame; skipped on panes too narrow to show the hint whole.
+  if [[ $st == working && $kind == claude && $pw =~ ^[0-9]+$ ]] && (( pw >= 90 )); then
+    [[ $LIVE == *" $pane "* ]] || st=idle
+  fi
   # A turn that ends while a backgrounded Bash call is still running leaves the
   # agent genuinely working, so "idle" is upgraded here too — not just the empty
   # state. Otherwise a long sweep looks like nobody is doing anything.
@@ -155,7 +184,112 @@ while IFS='|' read -r wid st cmd ppid kind bg bgat; do   # '|' not tab: tabs are
   [[ -z $a ]] && continue
   case "$ACT" in *" $wid="*) prev=${ACT#*" $wid="}; prev=${prev%% *}; (( a <= prev )) && continue; ACT=${ACT/" $wid=$prev "/ } ;; esac
   ACT="$ACT$wid=$a "
-done < <(tmux list-panes -s -t main -F '#{window_id}|#{@agent_state}|#{pane_current_command}|#{pane_pid}|#{@agent_kind}|#{@agent_bg}|#{@agent_bg_at}' 2>/dev/null)
+done <<< "$PANES"
+
+# Claude Code subagents run inside the Claude process, so there is no session to
+# list: agent-state.sh keeps a file per live one (SubagentStart/SubagentStop),
+# under the pane that spawned it. They are shown as children of that tab, the
+# same as pi workers — a running one, a quiet one, and a finished one only
+# while you are looking at it. A subagent that died without its Stop would stay
+# forever, so one whose transcript has been silent for half an hour is dropped.
+CCREG="$STATE/cc"
+declare -a C_WID=() C_ID=() C_LABEL=() C_ST=() C_PATH=() C_PAR=() C_PANE=() C_REG=() C_VIEW=() C_CLK=() C_LIVE=()
+# oldest first (ls -U: by creation), the order Claude Code lists them in — one
+# listing for every pane's files
+REGS=""; [[ -n $CCPANES && -d $CCREG ]] && REGS=$(ls -trU "$CCREG"/*/* 2>/dev/null)
+for e in $CCPANES; do
+  while IFS= read -r f; do
+    [[ $f == "$CCREG/${e#*:}/"* && -f $f ]] || continue
+    id=${f##*/}; fin=0; [[ $id == *.done ]] && { fin=1; id=${id%.done}; }
+    (( fin )) && [[ $CUR != "ccsub-$id" || -f ${f%.done} ]] && continue
+    tp="" ty="" at="" froze=""; { IFS= read -r tp; IFS= read -r ty; IFS= read -r at; IFS= read -r froze; } < "$f"
+    # what Claude Code's clock for it reads now: the time since the clock
+    # started, or what it froze at once the subagent stopped
+    clk=""
+    if [[ $at =~ ^[0-9]+$ ]]; then
+      if (( ! fin )); then clk=$(( NOW - at )); elif [[ $froze =~ ^[0-9]+$ ]]; then clk=$froze; fi
+    fi
+    label=$ty par=""
+    if [[ -f $tp.meta.json ]]; then
+      meta=$(<"$tp.meta.json")
+      [[ $meta == *'"description":"'* ]] && { label=${meta#*\"description\":\"}; label=${label%%\"*}; }
+      # a subagent started by another subagent names it, so the rows nest
+      [[ $meta == *'"parentAgentId":"'* ]] && { par=${meta#*\"parentAgentId\":\"}; par=${par%%\"*}; }
+    fi
+    C_PAR+=("$par"); C_PANE+=("${e#*:}"); C_REG+=("$f"); C_VIEW+=(0); C_CLK+=("$clk"); C_LIVE+=(0); C_WID+=("${e%%:*}"); C_ID+=("$id"); C_LABEL+=("${label:-agent}"); C_PATH+=("$tp.jsonl")
+    (( fin )) && C_ST+=(done) || C_ST+=(run)
+  done <<< "$REGS"
+done
+if (( ${#C_ID[@]} > 0 )); then   # one stat for all of them: how long each has been silent
+  MT=$'\n'"$(stat -f '%m %N' "${C_PATH[@]}" 2>/dev/null)"$'\n'
+  for i in "${!C_ID[@]}"; do
+    [[ ${C_ST[$i]} == run ]] || continue
+    t=${MT%%" ${C_PATH[$i]}"$'\n'*}; t=${t##*$'\n'}
+    [[ $MT == *" ${C_PATH[$i]}"$'\n'* && $t =~ ^[0-9]+$ ]] || continue   # no transcript yet: just started
+    age=$(( NOW - t ))
+    if (( age > 1800 )); then C_ST[$i]=gone; [[ $CUR == "ccsub-${C_ID[$i]}" ]] && C_ST[$i]=done
+    elif (( age > 120 )); then C_ST[$i]=quiet; fi
+  done
+fi
+# Claude Code renames a subagent as it works ("Writing A4.md row findings"), and
+# that name exists nowhere but on its screen: in the list under the prompt, one
+# row per subagent. A row carries no id, only a type and how long the subagent
+# has run, so telling which row is which is a job of its own — cc-agent-open.pl
+# does it for a click (rows and subagents paired in start order, by clock, type
+# and depth) and the same pairing names the rows here, so that what a row is
+# called and what clicking it opens can never disagree. One call per pane that
+# has subagents; a pane not showing its list keeps the names it had.
+if (( ${#C_ID[@]} > 0 )); then
+  seenp=" "
+  for i in "${!C_ID[@]}"; do
+    pn=${C_PANE[$i]}; [[ $seenp == *" $pn "* ]] && continue; seenp+="$pn "
+    while IFS=$'\t' read -r id onscreen label; do
+      for j in "${!C_ID[@]}"; do
+        [[ ${C_ID[$j]} == "$id" && ${C_PANE[$j]} == "$pn" ]] || continue
+        C_LABEL[$j]=$label; C_VIEW[$j]=$onscreen; C_LIVE[$j]=1
+      done
+    done < <(
+      # Working it out costs a process and a screen read per pane, and this
+      # script runs on every tab switch: reuse the answer for a couple of
+      # seconds. A click on a subagent row empties the file (sidebar-click.sh),
+      # since it is about to change exactly this.
+      nc="${TMPDIR:-/tmp}/tmux-sidebar-$UID.ccnames.$pn"; at=""
+      [[ -s $nc ]] && IFS= read -r at < "$nc"
+      if [[ $at =~ ^[0-9]+$ ]] && (( NOW - at <= 2 )); then tail -n +2 "$nc"
+      else
+        out=$("$HOME/.config/tmux/cc-agent-open.pl" "%$pn" names 2>/dev/null)
+        printf '%s\n%s\n' "$NOW" "$out" > "$nc.tmp" && mv -f "$nc.tmp" "$nc"
+        printf '%s\n' "$out"
+      fi)
+  done
+fi
+
+# A click says what it is about to put on a pane's screen (sidebar-click.sh)
+# before the keys have landed; for the couple of seconds that takes, believe it
+# over the screen, so the highlight moves with the click.
+HINT="${TMPDIR:-/tmp}/tmux-sidebar-$UID.ccview"
+if [[ -f $HINT ]]; then
+  hp="" hid="" hat=""; read -r hp hid hat < "$HINT"
+  if [[ $hat =~ ^[0-9]+$ ]] && (( NOW - hat <= 2 )); then
+    for i in "${!C_ID[@]}"; do
+      [[ ${C_PANE[$i]} == "$hp" ]] || continue
+      C_VIEW[$i]=0; [[ ${C_ID[$i]} == "$hid" ]] && C_VIEW[$i]=1
+    done
+  fi
+fi
+
+# A name read off the list is kept: a row is not always in sight — a long list
+# scrolls, and a subagent's own subagents are listed only while it is selected
+# — and without this the sidebar fell back to the first description each time
+# the row left the screen, so names flickered as you clicked around.
+NAMES="$STATE/cc-names"
+for i in "${!C_ID[@]}"; do
+  nf="$NAMES/${C_ID[$i]}"; old=""
+  [[ -f $nf ]] && IFS= read -r old < "$nf"
+  if [[ ${C_LIVE[$i]} == 1 ]]; then
+    [[ ${C_LABEL[$i]} == "$old" ]] || { [[ -d $NAMES ]] || mkdir -p "$NAMES"; printf '%s\n' "${C_LABEL[$i]}" > "$nf"; }
+  elif [[ -n $old ]]; then C_LABEL[$i]=$old; fi
+done
 
 activity() {  # indicator for tab $1 in $REPLY_A (visible width 2)
   local v=""
@@ -177,6 +311,9 @@ busy_children() {  # workers under tab $1 with a turn: $REPLY_B in all, $REPLY_Q
     [[ -n $REPLY_W ]] && REPLY_B=$((REPLY_B + 1))
     [[ $REPLY_W == queued ]] && REPLY_Q=$((REPLY_Q + 1))
   done
+  for i in "${!C_ID[@]}"; do
+    [[ ${C_WID[$i]} == "$1" && ( ${C_ST[$i]} == run || ${C_ST[$i]} == quiet ) ]] && REPLY_B=$((REPLY_B + 1))
+  done
 }
 # Tabs whose worker list is collapsed (toggled by clicking ▾/▸).
 # A tab lists the workers still running, the way Claude Code shows subagents:
@@ -193,6 +330,10 @@ child_count() {  # number of workers under tab $1, in $REPLY_N; 1 if one is bein
   for i in "${!W_SESS[@]}"; do
     [[ ${W_PARENT[$i]} == "$1" ]] || continue
     REPLY_N=$((REPLY_N + 1)); [[ ${W_SESS[$i]} == "$CUR" || $CUR == "pisub-${W_SESS[$i]}--"* ]] && VIEWING=1
+  done
+  for i in "${!C_ID[@]}"; do
+    [[ ${C_WID[$i]} == "$1" && ${C_ST[$i]} != gone ]] || continue
+    REPLY_N=$((REPLY_N + 1)); [[ $CUR == "ccsub-${C_ID[$i]}" ]] && VIEWING=1
   done
 }
 
@@ -232,7 +373,7 @@ children() {  # print child rows for tab $1 (group $2, index $3); $4=1 hides the
     room; vis "$tail"
     fit "${sess#*-wt-}" $(( REPLY_ROOM - 5 - ${#fold} - 2 - ${#REPLY_V} )); label=$REPLY_F
     cm=""; [[ $m == "▶" ]] && cm=$'\t▶'
-    printf '%s\t%04d\t%s\t   %s└%s %s%s %s%s%s\n' "$2" "$3" "s:$sess" "$DIM" "$RST" "$fold" "$label" "$busy" "$tail" "$cm"
+    printf '%s\t%04d\t%s\t   %s└%s %s%s %s%s%s\n' "$2" "$3" "s:$sess" "$DIM" "$RST" "$fold" "$PIS$label$SRST" "$busy" "$tail" "$cm"
     (( open )) || continue
     for d in "$sub"/*/; do
       [[ -f ${d}label ]] || continue
@@ -247,6 +388,43 @@ children() {  # print child rows for tab $1 (group $2, index $3); $4=1 hides the
       cm=""; [[ $m == "▶" ]] && cm=$'\t▶'
       printf '%s\t%04d\t%s\t      %s└ %s%s %s%s\n' "$2" "$3" "v:pisub-$sess--$n" "$DIM" "$label" "$RST" "$busy" "$cm"
     done
+  done
+  [[ -n $want ]] || return 0
+  # the ones shown under this tab; a child whose parent is not among them (it
+  # finished first) is listed at the top level instead of disappearing
+  local shown=" "
+  for i in "${!C_ID[@]}"; do
+    [[ ${C_WID[$i]} == "$want" && ${C_ST[$i]} != gone ]] && shown+="${C_ID[$i]} "
+  done
+  cc_rows "$want" "$2" "$3" "" 0 "$shown"
+}
+cc_rows() {  # tab, group, index, parent agent id ("" = top level), depth, ids shown
+  local i k m busy label cm pad fold tail kids open
+  (( $5 > 6 )) && return 0
+  for i in "${!C_ID[@]}"; do
+    [[ ${C_WID[$i]} == "$1" && $6 == *" ${C_ID[$i]} "* ]] || continue
+    if [[ -n $4 ]]; then [[ ${C_PAR[$i]} == "$4" ]] || continue
+    else [[ -z ${C_PAR[$i]} || $6 != *" ${C_PAR[$i]} "* ]] || continue; fi
+    m=" "; [[ $CUR == "ccsub-${C_ID[$i]}" || ( $TABSUB == 1 && ${C_VIEW[$i]} == 1 ) ]] && m="▶"
+    case ${C_ST[$i]} in run) busy="${YEL}●${RST}" ;; quiet) busy="${DIM}•${RST}" ;; *) busy="" ;; esac
+    # Its own subagents are folded away by default, like a pi worker's nested
+    # runs: ▸ and a count, unfolded by clicking the glyph — or by itself while
+    # you are looking at one of them.
+    kids=0 open=0 fold="" tail=""
+    for k in "${!C_ID[@]}"; do
+      [[ ${C_PAR[$k]} == "${C_ID[$i]}" && $6 == *" ${C_ID[$k]} "* ]] || continue
+      kids=$((kids + 1))
+      [[ $CUR == "ccsub-${C_ID[$k]}" || ( $TABSUB == 1 && ${C_VIEW[$k]} == 1 ) ]] && open=1
+    done
+    if (( kids > 0 )); then
+      [[ $EXPANDED == *" ccsub-${C_ID[$i]} "* ]] && open=1
+      if (( open )); then fold="▾ "; else fold="▸ "; tail=" ${YEL}⋯$kids${RST}"; fi
+    fi
+    rep "   " "$5"; pad=$REPLY_R
+    vis "$tail"; room; fit "${C_LABEL[$i]}" $(( REPLY_ROOM - 5 - 2 - ${#pad} - ${#fold} - ${#REPLY_V} )); label=$REPLY_F
+    cm=""; [[ $m == "▶" ]] && cm=$'\t▶'
+    printf '%s\t%04d\t%s\t   %s%s└%s %s%s%s%s %s%s%s\n' "$2" "$3" "v:ccsub-${C_ID[$i]}" "$pad" "$DIM" "$RST" "$fold" "$CCS" "$label" "$SRST" "$busy" "$tail" "$cm"
+    (( kids == 0 || open )) && cc_rows "$1" "$2" "$3" "${C_ID[$i]}" $(( $5 + 1 )) "$6"
   done
 }
 
@@ -359,6 +537,14 @@ while IFS=$'\t' read -r id idx active act path name; do
     # (or the one being viewed). Once they are all finished the tab shows
     # nothing at all — no glyph, no count — until one gets another turn.
     if (( REPLY_B > 0 || VIEWING )); then (( collapsed )) && fold="▸" || fold="▾"; fi
+  fi
+  # The active tab may be showing one of its subagents instead of the main
+  # agent: then that row is the one you are looking at, not the tab's.
+  TABSUB=0
+  if [[ $m == "▶" ]] && (( ! collapsed )); then
+    for i in "${!C_ID[@]}"; do
+      [[ ${C_WID[$i]} == "$id" && ${C_VIEW[$i]} == 1 && ${C_ST[$i]} != gone ]] && { TABSUB=1; m=" "; break; }
+    done
   fi
   activity "$id"
   # the ⋯ spinner glyph is now shown as the activity dot instead

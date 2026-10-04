@@ -39,7 +39,14 @@ case "$want" in
   prompt) want=working turn=1; remember
     # A new turn is a clean slate: any background agent still counted here died
     # without its SubagentStop, and must not keep the tab yellow.
-    TMUX= $T set -p -u -t "$TMUX_PANE" @agent_bg ;;
+    TMUX= $T set -p -u -t "$TMUX_PANE" @agent_bg
+    # An idle session may have been put on background QoS (taskpolicy -b) to
+    # give the rest of the machine room under memory pressure; the moment you
+    # type into it again it is the one that matters, so undo that for it and
+    # everything it started. Async: this hook is on the prompt's critical path.
+    ( cp=$(pgrep -P "$(TMUX= $T display -t "$TMUX_PANE" -p '#{pane_pid}')" | head -1)
+      fg() { taskpolicy -B -p "$1"; for c in $(pgrep -P "$1"); do fg "$c"; done; }
+      [ -n "$cp" ] && fg "$cp" ) >/dev/null 2>&1 & ;;
   bgstart|bgstop)
     # A background subagent (Explore, Task, ...) runs *inside* the Claude
     # process: there is no child process, so the shell scan in sidebar-list.sh
@@ -49,6 +56,44 @@ case "$want" in
     # grey and stayed grey, with the pane itself saying "Waiting for N
     # background agents to finish". SubagentStart/SubagentStop are the only
     # events that bound a subagent's life, so count them.
+    # The count says how many; the sidebar also lists them, one row each, the
+    # way it lists pi workers. So keep a file per live subagent, named by its
+    # id: line 1 is its transcript (minus .jsonl — the .meta.json beside it
+    # holds the description), line 2 its type, for the moment before the meta
+    # exists. Line 3 is when its clock started, as Claude Code shows it beside
+    # the subagent: at its first start, and again each time it is sent a
+    # message (see SendMessage below) — but not when it merely stops and picks
+    # itself up again, as one waiting on a background command does. Line 4,
+    # once it has stopped, is what the clock froze at. That running time is the
+    # only thing a row in Claude Code's list can be told apart by.
+    # A finished one is kept as <id>.done so a row you are looking at
+    # does not vanish under you; those are swept after half a day.
+    aid=$(printf '%s' "$json" | jq -r '.agent_id // ""')
+    case "$aid" in ''|*[!A-Za-z0-9_-]*) aid="" ;; esac
+    if [ -n "$aid" ]; then
+      REG="$HOME/.orchestrate-subagents/cc/${TMUX_PANE#%}"
+      if [ "$want" = bgstart ]; then
+        mkdir -p "$REG"
+        if [ -f "$REG/$aid.done" ]; then
+          # A finished subagent given another message starts again under the
+          # same id: take its file back; its clock runs on from where it started.
+          { IFS= read -r l1; IFS= read -r l2; IFS= read -r at; } < "$REG/$aid.done"
+          case "$at" in ''|*[!0-9]*) at=$(stat -f %B "$REG/$aid.done") ;; esac
+          mv -f "$REG/$aid.done" "$REG/$aid"
+          printf '%s\n%s\n%s\n' "$l1" "$l2" "$at" > "$REG/$aid"
+        else
+          tp=$(printf '%s' "$json" | jq -r '.transcript_path // ""')
+          printf '%s\n%s\n%s\n' "${tp%.jsonl}/subagents/agent-$aid" \
+            "$(printf '%s' "$json" | jq -r '.agent_type // "agent"')" "$(date +%s)" > "$REG/$aid"
+        fi
+        find "$REG" -name '*.done' -mmin +720 -delete
+      elif [ -f "$REG/$aid" ]; then
+        { IFS= read -r l1; IFS= read -r l2; IFS= read -r at; } < "$REG/$aid"
+        case "$at" in ''|*[!0-9]*) at=$(stat -f %B "$REG/$aid") ;; esac
+        printf '%s\n%s\n%s\n%s\n' "$l1" "$l2" "$at" "$(( $(date +%s) - at ))" > "$REG/$aid"
+        mv -f "$REG/$aid" "$REG/$aid.done"
+      fi
+    fi
     n=$(TMUX= $T display -t "$TMUX_PANE" -p '#{@agent_bg}')
     case "$n" in ''|*[!0-9]*) n=0 ;; esac
     if [ "$want" = bgstart ]; then n=$((n + 1)); else n=$((n - 1)); fi
@@ -81,6 +126,17 @@ case "$want" in
     kind=$(printf '%s' "$json" | jq -r '(.notification_type // "") + " " + (.message // "")')
     case "$kind" in *permission*|*approval*|*question*) want=waiting ;; *) exit 0 ;; esac ;;
   pre|working)                     # PreToolUse / PostToolUse
+    # A message to a subagent restarts its clock in Claude Code's list; note
+    # when, or the sidebar can no longer tell which row is which (see bgstart).
+    case "$want$json" in pre*'"tool_name":"SendMessage"'*)
+      to=$(printf '%s' "$json" | jq -r '.tool_input.to // ""')
+      case "$to" in ''|*[!A-Za-z0-9_-]*) to="" ;; esac
+      for f in "$HOME/.orchestrate-subagents/cc/${TMUX_PANE#%}/$to" "$HOME/.orchestrate-subagents/cc/${TMUX_PANE#%}/$to.done"; do
+        [ -n "$to" ] && [ -f "$f" ] || continue
+        { IFS= read -r l1; IFS= read -r l2; } < "$f"
+        printf '%s\n%s\n%s\n' "$l1" "$l2" "$(date +%s)" > "$f"
+      done ;;
+    esac
     # AskUserQuestion and ExitPlanMode block on you by definition, so they say
     # "needs you" themselves. Notification can't be relied on for it: it is a
     # notification, and one doesn't always arrive for a question — a tab asking
