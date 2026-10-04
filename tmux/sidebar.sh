@@ -22,6 +22,11 @@ tmux -L ui set -g @sidebar_fifo "${TMPDIR:-/tmp}/tmux-sidebar-$UID.scroll.fifo" 
 while :; do
   # If main is gone, wait for it to come back.
   if ! tmux has-session -t main 2>/dev/null; then sleep 1; continue; fi
+  # Drop the previous socket before every launch, not just the first: fzf
+  # unlinks it on a clean exit but not when it is killed, and a leftover file
+  # makes the next --listen bind fail — the sidebar then renders but every
+  # refresh is a silent no-op.
+  rm -f "$SOCK"
   "$LIST" > "${TMPDIR:-/tmp}/tmux-sidebar-$UID.all"
   "$HOME/.config/tmux/sidebar-view.sh" | tee "$CACHE" | fzf \
     --listen="$SOCK" \

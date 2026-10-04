@@ -11,7 +11,17 @@ unset TMUX   # always address the default ("main") server, not the outer ui one
 # first caller holds a lock and reloads while a "dirty" flag keeps being set;
 # every other caller just sets the flag and exits.
 SOCK="${TMPDIR:-/tmp}/tmux-sidebar-$UID.sock"
-[ -S "$SOCK" ] || exit 0
+if [ ! -S "$SOCK" ]; then
+  # fzf can outlive its own listen socket. The sidebar keeps rendering, so
+  # nothing looks broken, but no refresh reaches it and the highlight stops
+  # following the active tab. Kill it; sidebar.sh's loop starts a new one.
+  # Only one that has had time to bind: a refresh can land in the moment
+  # between fzf starting and its socket appearing.
+  for p in $(pgrep -f "fzf --listen=$SOCK"); do
+    case "$(ps -o etime= -p "$p" | tr -d ' ')" in 00:0[0-4]) ;; *) kill "$p" ;; esac
+  done
+  exit 0
+fi
 LIST="$HOME/.config/tmux/sidebar-list.sh"
 VIEW="$HOME/.config/tmux/sidebar-view.sh"
 ALL="${TMPDIR:-/tmp}/tmux-sidebar-$UID.all"       # every row; the view slices it
