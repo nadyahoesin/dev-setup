@@ -67,7 +67,7 @@ case "$want" in
     # once it has stopped, is what the clock froze at. That running time is the
     # only thing a row in Claude Code's list can be told apart by.
     # A finished one is kept as <id>.done so a row you are looking at
-    # does not vanish under you; those are swept after half a day.
+    # does not vanish under you; those are swept after two hours.
     aid=$(printf '%s' "$json" | jq -r '.agent_id // ""')
     case "$aid" in ''|*[!A-Za-z0-9_-]*) aid="" ;; esac
     if [ -n "$aid" ]; then
@@ -86,7 +86,7 @@ case "$want" in
           printf '%s\n%s\n%s\n' "${tp%.jsonl}/subagents/agent-$aid" \
             "$(printf '%s' "$json" | jq -r '.agent_type // "agent"')" "$(date +%s)" > "$REG/$aid"
         fi
-        find "$REG" -name '*.done' -mmin +720 -delete
+        find "$REG" -name '*.done' -mmin +120 -delete
       elif [ -f "$REG/$aid" ]; then
         { IFS= read -r l1; IFS= read -r l2; IFS= read -r at; } < "$REG/$aid"
         case "$at" in ''|*[!0-9]*) at=$(stat -f %B "$REG/$aid") ;; esac

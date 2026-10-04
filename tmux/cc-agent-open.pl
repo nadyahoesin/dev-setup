@@ -112,7 +112,11 @@ unless ($main) {
     # renamed when it stopped: ctime is the stop. Files that keep their own
     # clock (line 3: when it started; line 4: what it froze at on stopping)
     # say exactly what the row reads; older ones are guessed from the stat.
-    my %e = (born => $B, again => $m, ran => $n =~ /\.done$/ ? $c - $B : -1e9, name => $n);
+    my %e = (born => $B, again => $m, ran => $n =~ /\.done$/ ? $c - $B : -1e9, name => $n, done => $n =~ /\.done$/ ? 1 : 0);
+    # One that stopped a good while ago is no longer in Claude Code's list, and
+    # must not be here either: a running row's clock passes through every
+    # value, so sooner or later it reads exactly what some old one froze at.
+    next if $e{done} && time - $c > 1800 && $n ne $reg;
     if (open my $f, '<', $n) {
       my @ln = <$f>; close $f; chomp @ln;
       # its type, and whether another subagent started it: a row says both
@@ -161,7 +165,9 @@ sub pair {   # which visible row is which subagent: (index into @ents => index i
       my ($d) = defined $e->{clock} ? abs($row->{secs} - $e->{clock})
         : sort { $a <=> $b } abs($row->{secs} - $e->{ran}), map { abs($now - $row->{secs} - $_) } $e->{born}, $e->{again};
       my @opt;                                            # on a tie, the pairing wins
-      push @opt, [$cost[$i - 1][$j - 1] + $d, 'both'] if $d <= ($row->{exact} ? 6 : 75)
+      # a stopped one is the less likely owner of a row: it takes it only
+      # when no running subagent fits
+      push @opt, [$cost[$i - 1][$j - 1] + $d + ($e->{done} ? 2.5 : 0), 'both'] if $d <= ($row->{exact} ? 6 : 75)
         && !($row->{kid} xor $e->{kid} // 0) && (!$e->{type} || $e->{type} eq $row->{type});
       push @opt, [$cost[$i][$j - 1], 'ent'], [$cost[$i - 1][$j] + $SKIP, 'row'];
       my ($best) = sort { $a->[0] <=> $b->[0] } @opt;
@@ -178,13 +184,26 @@ sub pair {   # which visible row is which subagent: (index into @ents => index i
 }
 
 if ($names) {
-  my @l = rows(shot());
+  my @scr = screen();
+  my @l = rows(@scr);
   my %row = pair(@l);
   binmode STDOUT, ':utf8';
+  # "#complete": every subagent Claude Code still has is accounted for, so one
+  # that is not printed here is gone — stopped by hand, which fires no hook.
+  # That needs the whole list in sight and every row of it recognised; or no
+  # list at all under a prompt that is plainly there (a dialog over the footer
+  # hides the list without anything having stopped).
+  my %got = map { $_ => 1 } values %row;
+  my @top = grep { !$l[$_]{main} && !$l[$_]{kid} } 0 .. $#l;
+  if (@l ? (!$more_up && !$more_down && !grep { !$got{$_} } @top)
+         : scalar grep { /⏵⏵|shift\+tab to cycle|\? for shortcuts/ && !/↓ to manage|to see subagents/ }
+             @scr[($#scr > 6 ? $#scr - 6 : 0) .. $#scr]) {   # with subagents about, the footer says so even when the list is not drawn
+    print "#complete\n";
+  }
   for my $j (sort { $a <=> $b } keys %row) {
-    my $r = $l[$row{$j}]; next unless defined $r->{label} && length $r->{label};
+    my $r = $l[$row{$j}];
     (my $id = $ents[$j]{name}) =~ s{.*/}{}; $id =~ s/\.done$//;
-    print "$id\t", ($r->{on} ? 1 : 0), "\t$r->{label}\n";
+    print "$id\t", ($r->{on} ? 1 : 0), "\t", $r->{label} // '', "\n";   # in the list even when its name cannot be read
   }
   exit 0;
 }

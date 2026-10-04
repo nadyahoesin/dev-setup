@@ -129,12 +129,12 @@ args=()
 while IFS='|' read -r wid st cmd ppid kind bg bgat pane pw; do
   [[ $st == working && $kind == claude && $pw =~ ^[0-9]+$ ]] && (( pw >= 90 )) || continue
   (( ${#args[@]} )) && args+=(';')
-  args+=(display-message -p "@@$pane" ';' capture-pane -p -t "$pane")
+  args+=(display-message -p "@@${pane#%}" ';' capture-pane -p -t "$pane")   # no % in the marker: display-message would expand it
 done <<< "$PANES"
 if (( ${#args[@]} )); then
   cur=""
   while IFS= read -r line; do
-    case "$line" in @@%*) cur=${line#@@} ;; *"esc to interrupt"*) [[ -n $cur ]] && LIVE+="$cur " ;; esac
+    case "$line" in @@[0-9]*) cur="%${line#@@}" ;; *"esc to interrupt"*) [[ -n $cur ]] && LIVE+="$cur " ;; esac
   done < <(tmux "${args[@]}" 2>/dev/null)
 fi
 while IFS='|' read -r wid st cmd ppid kind bg bgat pane pw; do   # '|' not tab: tabs are IFS whitespace and an empty @agent_state would collapse
@@ -167,9 +167,11 @@ while IFS='|' read -r wid st cmd ppid kind bg bgat pane pw; do   # '|' not tab: 
       # when they were added never increments the count — which is every session
       # running at the time, exactly when you most want the tab to be honest.
       # A stamp this fresh can only be a background agent still calling tools; a
-      # true straggler after a finished turn is one or two events, so it costs at
-      # most a minute of yellow instead of the count's ten.
-      (( age <= 60 )) && st=working
+      # true straggler after a finished turn is one or two events, so it costs a
+      # few seconds of yellow instead of the count's ten minutes.
+      # (15s, not a minute: a tab that has just finished kept its yellow dot
+      # for as long as this fuse, and looked like it was still running.)
+      (( age <= 15 )) && st=working
     fi
   fi
   case "$st" in
@@ -243,10 +245,13 @@ if (( ${#C_ID[@]} > 0 )); then
   seenp=" "
   for i in "${!C_ID[@]}"; do
     pn=${C_PANE[$i]}; [[ $seenp == *" $pn "* ]] && continue; seenp+="$pn "
+    whole=0
     while IFS=$'\t' read -r id onscreen label; do
+      [[ $id == "#complete" ]] && { whole=1; continue; }
       for j in "${!C_ID[@]}"; do
         [[ ${C_ID[$j]} == "$id" && ${C_PANE[$j]} == "$pn" ]] || continue
-        C_LABEL[$j]=$label; C_VIEW[$j]=$onscreen; C_LIVE[$j]=1
+        C_VIEW[$j]=$onscreen; C_LIVE[$j]=2   # 2: in the list; 1: and its name was read
+        [[ -n $label ]] && { C_LABEL[$j]=$label; C_LIVE[$j]=1; }
       done
     done < <(
       # Working it out costs a process and a screen read per pane, and this
@@ -261,6 +266,20 @@ if (( ${#C_ID[@]} > 0 )); then
         printf '%s\n%s\n' "$NOW" "$out" > "$nc.tmp" && mv -f "$nc.tmp" "$nc"
         printf '%s\n' "$out"
       fi)
+    # A subagent you stop yourself fires no SubagentStop, so its file stays as
+    # if it were running. Claude Code's list is the witness: when all of it is
+    # in sight and accounted for, a top-level subagent that is not in it has
+    # gone, and its own subagents with it. Not in its first seconds — the file
+    # is written before the row is drawn.
+    if (( whole )); then
+      for j in "${!C_ID[@]}"; do
+        [[ ${C_PANE[$j]} == "$pn" && -z ${C_PAR[$j]} && ${C_LIVE[$j]} == 0 ]] || continue
+        [[ ${C_ST[$j]} == run || ${C_ST[$j]} == quiet ]] || continue
+        [[ ${C_CLK[$j]} =~ ^[0-9]+$ ]] && (( ${C_CLK[$j]} > 10 )) || continue
+        C_ST[$j]=gone
+        for k in "${!C_ID[@]}"; do [[ ${C_PAR[$k]} == "${C_ID[$j]}" ]] && C_ST[$k]=gone; done
+      done
+    fi
   done
 fi
 
