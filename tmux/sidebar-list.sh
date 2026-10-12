@@ -217,6 +217,22 @@ for e in $CCPANES; do
     id=${f##*/}; fin=0; [[ $id == *.done ]] && { fin=1; id=${id%.done}; }
     (( fin )) && [[ $CUR != "ccsub-$id" || -f ${f%.done} ]] && continue
     tp="" ty="" at="" froze=""; { IFS= read -r tp; IFS= read -r ty; IFS= read -r at; IFS= read -r froze; } < "$f"
+    # A Workflow's agents keep their transcript one level down, under
+    # subagents/workflows/<run>/, which the start hook cannot know. Without it
+    # the row had no name, and — no transcript, so never silent — one whose
+    # workflow was killed before its Stop stayed on the list for good. Look
+    # there, and write the path back so a click opens the right one too.
+    if [[ -n $tp && ! -f $tp.jsonl ]]; then
+      for g in "${tp%/agent-*}"/workflows/*/"agent-$id.jsonl"; do
+        [[ -f $g ]] || continue
+        tp=${g%.jsonl}
+        # (the temp file stays out of the registry: every file in it is an agent)
+        t="${TMPDIR:-/tmp}/tmux-ccreg-$UID.$$"
+        printf '%s\n' "$tp" "$ty" $at $froze > "$t"   # at/froze unquoted: an empty one is no line
+        if [[ -f $f ]]; then mv -f "$t" "$f"; else command rm -f "$t"; fi   # stopped meanwhile: leave its .done alone
+        break
+      done
+    fi
     # what Claude Code's clock for it reads now: the time since the clock
     # started, or what it froze at once the subagent stopped
     clk=""
